@@ -251,7 +251,6 @@ users:
     ssh_authorized_keys:
       - ${var.ssh_public_key}
 package_update: true
-package_upgrade: true
 packages:
   - qemu-guest-agent
 runcmd:
