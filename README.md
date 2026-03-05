@@ -26,3 +26,8 @@ tabelas EX
 ``sombreado``
 
 ├── <nome do arquivo>         # <descrição do arquivo>
+
+
+REPOSITÓRIOS VÁLIDOS
+https://github.com/TatuzinhoBixo/manual.git
+
