@@ -1,0 +1,403 @@
+---
+# =============================================================
+# CIS Benchmark Level 1 - Hardening para Ubuntu 22.04/24.04
+# Executado ANTES da instalação do RKE2
+# =============================================================
+- name: CIS Hardening Level 1
+  hosts: all
+  become: true
+  vars:
+    # Serviços desnecessários a desabilitar (CIS 2.1.x / 2.2.x)
+    # telnet mantido intencionalmente
+    unnecessary_services:
+      - avahi-daemon
+      - cups
+      - isc-dhcp-server
+      - slapd
+      - nfs-server
+      - rpcbind
+      - rsync
+      - snmpd
+      - squid
+
+    # Módulos de kernel a bloquear (CIS 3.4.x)
+    blacklist_kernel_modules:
+      - cramfs
+      - freevxfs
+      - hfs
+      - hfsplus
+      - jffs2
+      - udf
+      - dccp
+      - sctp
+      - rds
+      - tipc
+      - usb-storage
+
+    # Parâmetros sysctl - CIS + Kubernetes
+    sysctl_params:
+      # CIS 3.2.x - Parâmetros de rede
+      net.ipv4.ip_forward: 1                           # K8s requer
+      net.bridge.bridge-nf-call-iptables: 1             # K8s requer
+      net.bridge.bridge-nf-call-ip6tables: 1            # K8s requer
+      net.ipv4.conf.all.send_redirects: 0               # CIS 3.2.1
+      net.ipv4.conf.default.send_redirects: 0           # CIS 3.2.1
+      net.ipv4.conf.all.accept_source_route: 0          # CIS 3.2.2
+      net.ipv4.conf.default.accept_source_route: 0      # CIS 3.2.2
+      net.ipv4.conf.all.accept_redirects: 0             # CIS 3.2.3
+      net.ipv4.conf.default.accept_redirects: 0         # CIS 3.2.3
+      net.ipv4.conf.all.secure_redirects: 0             # CIS 3.2.4
+      net.ipv4.conf.default.secure_redirects: 0         # CIS 3.2.4
+      net.ipv4.conf.all.log_martians: 1                 # CIS 3.2.5
+      net.ipv4.conf.default.log_martians: 1             # CIS 3.2.5
+      net.ipv4.icmp_echo_ignore_broadcasts: 1           # CIS 3.2.6
+      net.ipv4.icmp_ignore_bogus_error_responses: 1     # CIS 3.2.7
+      net.ipv4.conf.all.rp_filter: 1                    # CIS 3.2.8
+      net.ipv4.conf.default.rp_filter: 1                # CIS 3.2.8
+      net.ipv4.tcp_syncookies: 1                        # CIS 3.2.9
+      net.ipv6.conf.all.accept_redirects: 0             # CIS 3.2.3
+      net.ipv6.conf.default.accept_redirects: 0         # CIS 3.2.3
+      net.ipv6.conf.all.accept_source_route: 0          # CIS 3.2.2
+      net.ipv6.conf.default.accept_source_route: 0      # CIS 3.2.2
+      # Kernel hardening
+      kernel.randomize_va_space: 2                       # CIS 1.5.2
+      kernel.sysrq: 0                                   # CIS 1.5.3
+      fs.suid_dumpable: 0                               # CIS 1.5.4
+      # Kubernetes extras
+      vm.overcommit_memory: 1
+      vm.panic_on_oom: 0
+      fs.inotify.max_user_watches: 524288
+      fs.inotify.max_user_instances: 8192
+
+  tasks:
+    # =========================================================
+    # 0) Proxmox Guest Agent
+    # =========================================================
+    - name: "[QEMU] Instalar e habilitar qemu-guest-agent"
+      apt:
+        name: qemu-guest-agent
+        state: present
+        update_cache: true
+
+    - name: "[QEMU] Habilitar e iniciar qemu-guest-agent"
+      systemd:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+
+    # =========================================================
+    # A) SSH Hardening (CIS 5.2.x)
+    # =========================================================
+    - name: "[SSH] Configurar sshd_config hardening"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+        validate: 'sshd -t -f %s'
+      loop:
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?PermitEmptyPasswords', line: 'PermitEmptyPasswords no' }
+        - { regexp: '^#?X11Forwarding', line: 'X11Forwarding no' }
+        - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 4' }
+        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 3' }
+        - { regexp: '^#?LoginGraceTime', line: 'LoginGraceTime 60' }
+        - { regexp: '^#?AllowAgentForwarding', line: 'AllowAgentForwarding no' }
+        - { regexp: '^#?AllowTcpForwarding', line: 'AllowTcpForwarding no' }
+        - { regexp: '^#?Protocol', line: 'Protocol 2' }
+        - { regexp: '^#?LogLevel', line: 'LogLevel VERBOSE' }
+        - { regexp: '^#?MaxSessions', line: 'MaxSessions 4' }
+        - { regexp: '^#?UseDNS', line: 'UseDNS no' }
+      notify: Restart sshd
+
+    - name: "[SSH] Garantir permissão restrita no sshd_config"
+      file:
+        path: /etc/ssh/sshd_config
+        owner: root
+        group: root
+        mode: '0600'
+
+    # =========================================================
+    # B) Kernel & sysctl (CIS 3.x + K8s)
+    # =========================================================
+    - name: "[KERNEL] Carregar módulo br_netfilter (K8s)"
+      modprobe:
+        name: br_netfilter
+        state: present
+
+    - name: "[KERNEL] Persistir módulo br_netfilter"
+      copy:
+        content: "br_netfilter\n"
+        dest: /etc/modules-load.d/br_netfilter.conf
+        mode: '0644'
+
+    - name: "[KERNEL] Carregar módulo overlay (K8s)"
+      modprobe:
+        name: overlay
+        state: present
+
+    - name: "[KERNEL] Persistir módulo overlay"
+      copy:
+        content: "overlay\n"
+        dest: /etc/modules-load.d/overlay.conf
+        mode: '0644'
+
+    - name: "[SYSCTL] Aplicar parâmetros CIS + Kubernetes"
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_set: true
+        state: present
+        reload: true
+        sysctl_file: /etc/sysctl.d/99-cis-kubernetes.conf
+      loop: "{{ sysctl_params | dict2items }}"
+
+    # =========================================================
+    # C) Serviços desnecessários (CIS 2.1.x / 2.2.x)
+    # =========================================================
+    - name: "[SERVICES] Desabilitar serviços desnecessários"
+      systemd:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop: "{{ unnecessary_services }}"
+      failed_when: false
+
+    # =========================================================
+    # D) Permissões de arquivos CIS (CIS 6.1.x)
+    # =========================================================
+    - name: "[PERMS] Ajustar permissões de arquivos críticos"
+      file:
+        path: "{{ item.path }}"
+        owner: root
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/passwd,  mode: '0644' }
+        - { path: /etc/shadow,  mode: '0640', group: shadow }
+        - { path: /etc/group,   mode: '0644' }
+        - { path: /etc/gshadow, mode: '0640', group: shadow }
+        - { path: /etc/passwd-,  mode: '0600' }
+        - { path: /etc/shadow-,  mode: '0600' }
+        - { path: /etc/group-,   mode: '0600' }
+        - { path: /etc/gshadow-, mode: '0600' }
+      failed_when: false
+
+    - name: "[PERMS] Garantir permissão no cron"
+      file:
+        path: "{{ item }}"
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - /etc/crontab
+        - /etc/cron.hourly
+        - /etc/cron.daily
+        - /etc/cron.weekly
+        - /etc/cron.monthly
+        - /etc/cron.d
+      failed_when: false
+
+    # =========================================================
+    # E) Auditd (CIS 4.1.x)
+    # =========================================================
+    - name: "[AUDIT] Instalar auditd"
+      apt:
+        name:
+          - auditd
+          - audispd-plugins
+        state: present
+        update_cache: true
+
+    - name: "[AUDIT] Configurar regras de auditoria CIS"
+      copy:
+        dest: /etc/audit/rules.d/cis.rules
+        mode: '0640'
+        content: |
+          # Monitorar alterações de data/hora (CIS 4.1.3)
+          -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
+          -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
+          -a always,exit -F arch=b64 -S clock_settime -k time-change
+          -w /etc/localtime -p wa -k time-change
+
+          # Monitorar usuários e grupos (CIS 4.1.4)
+          -w /etc/group -p wa -k identity
+          -w /etc/passwd -p wa -k identity
+          -w /etc/gshadow -p wa -k identity
+          -w /etc/shadow -p wa -k identity
+          -w /etc/security/opasswd -p wa -k identity
+
+          # Monitorar rede (CIS 4.1.5)
+          -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
+          -w /etc/issue -p wa -k system-locale
+          -w /etc/issue.net -p wa -k system-locale
+          -w /etc/hosts -p wa -k system-locale
+          -w /etc/network -p wa -k system-locale
+
+          # Monitorar logins (CIS 4.1.7)
+          -w /var/log/faillog -p wa -k logins
+          -w /var/log/lastlog -p wa -k logins
+          -w /var/log/tallylog -p wa -k logins
+
+          # Monitorar sessões (CIS 4.1.8)
+          -w /var/run/utmp -p wa -k session
+          -w /var/log/wtmp -p wa -k session
+          -w /var/log/btmp -p wa -k session
+
+          # Monitorar sudo (CIS 4.1.13)
+          -w /etc/sudoers -p wa -k scope
+          -w /etc/sudoers.d/ -p wa -k scope
+
+          # Monitorar módulos do kernel (CIS 4.1.16)
+          -w /sbin/insmod -p x -k modules
+          -w /sbin/rmmod -p x -k modules
+          -w /sbin/modprobe -p x -k modules
+          -a always,exit -F arch=b64 -S init_module -S delete_module -k modules
+
+          # Tornar configuração imutável (deve ser a última regra)
+          -e 2
+      notify: Restart auditd
+
+    - name: "[AUDIT] Habilitar e iniciar auditd"
+      systemd:
+        name: auditd
+        enabled: true
+        state: started
+
+    # =========================================================
+    # F) AppArmor (CIS 1.6.x)
+    # =========================================================
+    - name: "[APPARMOR] Instalar AppArmor"
+      apt:
+        name:
+          - apparmor
+          - apparmor-utils
+        state: present
+
+    - name: "[APPARMOR] Habilitar e iniciar AppArmor"
+      systemd:
+        name: apparmor
+        enabled: true
+        state: started
+
+    # =========================================================
+    # G) Fail2ban
+    # =========================================================
+    - name: "[FAIL2BAN] Instalar fail2ban"
+      apt:
+        name: fail2ban
+        state: present
+
+    - name: "[FAIL2BAN] Configurar jail local"
+      copy:
+        dest: /etc/fail2ban/jail.local
+        mode: '0644'
+        content: |
+          [DEFAULT]
+          bantime  = 3600
+          findtime = 600
+          maxretry = 5
+          backend  = systemd
+
+          [sshd]
+          enabled = true
+          port    = ssh
+          filter  = sshd
+          maxretry = 3
+      notify: Restart fail2ban
+
+    - name: "[FAIL2BAN] Habilitar e iniciar fail2ban"
+      systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+
+    # =========================================================
+    # H) Banners (CIS 1.7.x)
+    # =========================================================
+    - name: "[BANNER] Configurar /etc/issue"
+      copy:
+        dest: /etc/issue
+        mode: '0644'
+        content: |
+          ********************************************************************
+          *  Acesso autorizado apenas. Todas as atividades sao monitoradas. *
+          *  Uso nao autorizado sera reportado e processado.                *
+          ********************************************************************
+
+    - name: "[BANNER] Configurar /etc/issue.net"
+      copy:
+        dest: /etc/issue.net
+        mode: '0644'
+        content: |
+          ********************************************************************
+          *  Acesso autorizado apenas. Todas as atividades sao monitoradas. *
+          *  Uso nao autorizado sera reportado e processado.                *
+          ********************************************************************
+
+    - name: "[BANNER] Configurar /etc/motd"
+      copy:
+        dest: /etc/motd
+        mode: '0644'
+        content: |
+          ********************************************************************
+          *  tatulab - Ambiente monitorado                                  *
+          ********************************************************************
+
+    - name: "[BANNER] Habilitar Banner no SSH"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Banner'
+        line: 'Banner /etc/issue.net'
+        state: present
+      notify: Restart sshd
+
+    # =========================================================
+    # I) Blacklist módulos de kernel (CIS 1.1.x / 3.4.x)
+    # =========================================================
+    - name: "[MODULES] Blacklist de módulos de kernel desnecessários"
+      copy:
+        dest: /etc/modprobe.d/cis-blacklist.conf
+        mode: '0644'
+        content: |
+          {% for mod in blacklist_kernel_modules %}
+          install {{ mod }} /bin/true
+          blacklist {{ mod }}
+          {% endfor %}
+
+    # =========================================================
+    # J) Limites de recursos (CIS 1.5.x)
+    # =========================================================
+    - name: "[LIMITS] Configurar limites de core dump"
+      copy:
+        dest: /etc/security/limits.d/cis-hardening.conf
+        mode: '0644'
+        content: |
+          # CIS 1.5.4 - Desabilitar core dumps
+          * hard core 0
+
+    - name: "[LIMITS] Desabilitar core dumps via sysctl"
+      sysctl:
+        name: fs.suid_dumpable
+        value: '0'
+        state: present
+        reload: true
+
+    # =========================================================
+    # Handlers
+    # =========================================================
+  handlers:
+    - name: Restart sshd
+      systemd:
+        name: ssh
+        state: restarted
+
+    - name: Restart auditd
+      command: service auditd restart
+
+    - name: Restart fail2ban
+      systemd:
+        name: fail2ban
+        state: restarted

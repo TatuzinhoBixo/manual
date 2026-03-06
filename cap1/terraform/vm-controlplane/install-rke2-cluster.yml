@@ -1,0 +1,363 @@
+---
+# =============================================================
+# Play 1: Verificação inicial
+# =============================================================
+- name: Verificar estado dos control planes
+  hosts: rke2_servers
+  gather_facts: false
+  tasks:
+    - name: Checar se RKE2 já está instalado
+      command: which kubectl
+      register: kubectl_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Exibir status
+      debug:
+        msg: "{{ inventory_hostname }}: RKE2 {{ 'já instalado' if kubectl_check.rc == 0 else 'não instalado' }}"
+
+# =============================================================
+# Play 2: Instalar o primeiro control plane
+# O primeiro host do grupo rke2_servers é o bootstrap
+# =============================================================
+- name: Instalar primeiro control plane
+  hosts: rke2_servers
+  tasks:
+    - name: Gerar token do cluster
+      set_fact:
+        cluster_token: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=32') }}"
+      run_once: true
+
+    - name: Salvar token no localhost para uso posterior
+      copy:
+        content: "{{ cluster_token }}"
+        dest: /tmp/rke2-cluster-token
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Criar diretório de configuração do RKE2
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+      when: inventory_hostname == groups['rke2_servers'][0]
+
+    - name: Aplicar configuração do primeiro control plane
+      template:
+        src: templates/rke2-server-first.yaml.j2
+        dest: /etc/rancher/rke2/config.yaml
+        mode: '0600'
+      when: inventory_hostname == groups['rke2_servers'][0]
+
+    - name: Baixar o instalador do RKE2
+      get_url:
+        url: https://get.rke2.io
+        dest: /tmp/install-rke2.sh
+        mode: '0755'
+      when: inventory_hostname == groups['rke2_servers'][0]
+
+    - name: Instalar RKE2
+      command: /tmp/install-rke2.sh
+      environment:
+        INSTALL_RKE2_TYPE: server
+        INSTALL_RKE2_VERSION: "{{ omit if rke2_version == 'latest' else rke2_version }}"
+      when: inventory_hostname == groups['rke2_servers'][0]
+
+    - name: Habilitar e iniciar serviço rke2-server
+      systemd:
+        name: rke2-server
+        enabled: true
+        state: started
+      when: inventory_hostname == groups['rke2_servers'][0]
+
+    - name: Aguardar o node token ser gerado
+      wait_for:
+        path: /var/lib/rancher/rke2/server/node-token
+        timeout: 300
+      when: inventory_hostname == groups['rke2_servers'][0]
+
+    - name: Aguardar kubeconfig ser gerado (primeiro node)
+      wait_for:
+        path: /etc/rancher/rke2/rke2.yaml
+        timeout: 300
+      when: inventory_hostname == groups['rke2_servers'][0]
+
+    - name: Aguardar API server estar pronto (primeiro node)
+      command: /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes
+      register: api_ready
+      until: api_ready.rc == 0
+      retries: 40
+      delay: 15
+      changed_when: false
+      when: inventory_hostname == groups['rke2_servers'][0]
+
+# =============================================================
+# Play 3: Instalar control planes adicionais
+# Todos exceto o primeiro host do grupo
+# =============================================================
+- name: Instalar control planes adicionais
+  hosts: rke2_servers
+  serial: 1
+  tasks:
+    - name: Carregar token do cluster salvo no localhost
+      set_fact:
+        cluster_token: "{{ lookup('file', '/tmp/rke2-cluster-token') }}"
+      when: inventory_hostname != groups['rke2_servers'][0]
+
+    - name: Criar diretório de configuração do RKE2
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+      when: inventory_hostname != groups['rke2_servers'][0]
+
+    - name: Aplicar configuração de join
+      template:
+        src: templates/rke2-server-join.yaml.j2
+        dest: /etc/rancher/rke2/config.yaml
+        mode: '0600'
+      when: inventory_hostname != groups['rke2_servers'][0]
+
+    - name: Baixar o instalador do RKE2
+      get_url:
+        url: https://get.rke2.io
+        dest: /tmp/install-rke2.sh
+        mode: '0755'
+      when: inventory_hostname != groups['rke2_servers'][0]
+
+    - name: Instalar RKE2
+      command: /tmp/install-rke2.sh
+      environment:
+        INSTALL_RKE2_TYPE: server
+        INSTALL_RKE2_VERSION: "{{ omit if rke2_version == 'latest' else rke2_version }}"
+      when: inventory_hostname != groups['rke2_servers'][0]
+
+    - name: Habilitar e iniciar serviço rke2-server
+      systemd:
+        name: rke2-server
+        enabled: true
+        state: started
+      when: inventory_hostname != groups['rke2_servers'][0]
+
+    - name: Aguardar kubeconfig ser gerado
+      wait_for:
+        path: /etc/rancher/rke2/rke2.yaml
+        timeout: 300
+      when: inventory_hostname != groups['rke2_servers'][0]
+
+# =============================================================
+# Play 4: Configurar kubectl em todos os control planes
+# =============================================================
+- name: Configurar kubectl
+  hosts: rke2_servers
+  tasks:
+    - name: Aguardar binário kubectl existir
+      wait_for:
+        path: /var/lib/rancher/rke2/bin/kubectl
+        timeout: 300
+
+    - name: Criar symlink do kubectl do RKE2
+      file:
+        src: /var/lib/rancher/rke2/bin/kubectl
+        dest: /usr/local/bin/kubectl
+        state: link
+
+    - name: Criar diretório .kube para o usuário devopstatu
+      file:
+        path: /home/{{ ansible_user }}/.kube
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+
+    - name: Copiar kubeconfig
+      copy:
+        src: /etc/rancher/rke2/rke2.yaml
+        dest: /home/{{ ansible_user }}/.kube/config
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+
+    - name: Substituir 127.0.0.1 pelo IP do load balancer no kubeconfig
+      replace:
+        path: /home/{{ ansible_user }}/.kube/config
+        regexp: '127\.0\.0\.1'
+        replace: "{{ k8s_endpoint_ip }}"
+
+    - name: Configurar PATH e KUBECONFIG via profile.d (todos os shells de login)
+      copy:
+        content: |
+          export PATH=$PATH:/var/lib/rancher/rke2/bin
+          export KUBECONFIG=/home/{{ ansible_user }}/.kube/config
+        dest: /etc/profile.d/rke2.sh
+        mode: '0644'
+
+    - name: Configurar .vimrc para o usuário
+      copy:
+        src: templates/vimrc
+        dest: /home/{{ ansible_user }}/.vimrc
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+
+# =============================================================
+# Play 5: Instalar workers (agents)
+# =============================================================
+- name: Instalar workers
+  hosts: rke2_agents
+  serial: 2
+  tasks:
+    - name: Carregar token do cluster salvo no localhost
+      set_fact:
+        cluster_token: "{{ lookup('file', '/tmp/rke2-cluster-token') }}"
+
+    - name: Criar diretório de configuração do RKE2
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+
+    - name: Aplicar configuração do agent
+      template:
+        src: templates/rke2-agent.yaml.j2
+        dest: /etc/rancher/rke2/config.yaml
+        mode: '0600'
+
+    - name: Baixar o instalador do RKE2
+      get_url:
+        url: https://get.rke2.io
+        dest: /tmp/install-rke2.sh
+        mode: '0755'
+
+    - name: Instalar RKE2 agent
+      command: /tmp/install-rke2.sh
+      environment:
+        INSTALL_RKE2_TYPE: agent
+        INSTALL_RKE2_VERSION: "{{ omit if rke2_version == 'latest' else rke2_version }}"
+
+    - name: Habilitar e iniciar serviço rke2-agent
+      systemd:
+        name: rke2-agent
+        enabled: true
+        state: started
+
+# =============================================================
+# Play 6: Verificação final — roda no primeiro host do grupo
+# =============================================================
+- name: Verificar cluster
+  hosts: rke2_servers
+  run_once: true
+  tasks:
+    - name: Aguardar todos os nodes ficarem Ready
+      command: kubectl get nodes
+      register: nodes_status
+      until: nodes_status.stdout_lines | select('search', 'NotReady') | list | length == 0
+      retries: 20
+      delay: 15
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+
+    - name: Exibir nodes do cluster
+      command: kubectl get nodes -o wide
+      register: nodes_output
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+
+    - name: Resultado
+      debug:
+        msg: "{{ nodes_output.stdout_lines }}"
+
+    - name: Aplicar taint de control-plane (sem schedule de pods)
+      command: >
+        kubectl taint nodes {{ item }} node-role.kubernetes.io/control-plane=:NoSchedule --overwrite
+      loop: "{{ groups['rke2_servers'] }}"
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+
+# =============================================================
+# Play 7: Instalar MetalLB via Helm
+# =============================================================
+- name: Instalar MetalLB
+  hosts: rke2_servers
+  run_once: true
+  environment:
+    KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+    PATH: "{{ ansible_env.PATH }}:/var/lib/rancher/rke2/bin:/usr/local/bin"
+  tasks:
+    - name: Baixar script de instalação do Helm
+      get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get-helm-3.sh
+        mode: '0755'
+
+    - name: Instalar Helm
+      command: /tmp/get-helm-3.sh
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Adicionar repositório do MetalLB
+      command: helm repo add metallb https://metallb.github.io/metallb
+      register: repo_add
+      changed_when: "'has been added' in repo_add.stdout"
+      failed_when: repo_add.rc != 0 and 'already exists' not in repo_add.stderr
+
+    - name: Atualizar repositórios Helm
+      command: helm repo update
+
+    - name: Verificar se MetalLB já está instalado
+      command: helm status metallb -n metallb-system
+      register: metallb_status
+      ignore_errors: true
+      changed_when: false
+
+    - name: Instalar MetalLB via Helm
+      command: >
+        helm install metallb metallb/metallb
+        -n metallb-system
+        --create-namespace
+        --wait
+        --timeout 5m
+      when: metallb_status.rc != 0
+
+    - name: Aguardar controller do MetalLB ficar Ready
+      command: >
+        kubectl wait --for=condition=Ready pods
+        -l app.kubernetes.io/component=controller
+        -n metallb-system
+        --timeout=300s
+
+    - name: Aguardar speakers do MetalLB ficarem Ready
+      command: >
+        kubectl wait --for=condition=Ready pods
+        -l app.kubernetes.io/component=speaker
+        -n metallb-system
+        --timeout=300s
+
+    - name: Aplicar template do IPAddressPool e L2Advertisement
+      template:
+        src: templates/metallb-pool.yaml.j2
+        dest: /tmp/metallb-pool.yaml
+        mode: '0644'
+
+    - name: Criar IPAddressPool e L2Advertisement
+      command: kubectl apply -f /tmp/metallb-pool.yaml
+
+    - name: Verificar IPAddressPool criado
+      command: kubectl get ipaddresspool -n metallb-system
+      register: pool_output
+      changed_when: false
+
+    - name: Verificar L2Advertisement criado
+      command: kubectl get l2advertisement -n metallb-system
+      register: l2_output
+      changed_when: false
+
+    - name: Exibir status do MetalLB
+      debug:
+        msg:
+          - "IPAddressPool:"
+          - "{{ pool_output.stdout_lines }}"
+          - "L2Advertisement:"
+          - "{{ l2_output.stdout_lines }}"

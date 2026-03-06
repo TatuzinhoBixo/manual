@@ -1,0 +1,10 @@
+server: https://{{ k8s_endpoint_ip }}:9345
+token: {{ cluster_token }}
+write-kubeconfig-mode: "0600"
+cni: {{ rke2_cni }}
+disable:
+  - rke2-ingress-nginx
+  - rke2-canal
+tls-san:
+  - {{ k8s_endpoint_ip }}
+  - {{ k8s_endpoint_dns }}

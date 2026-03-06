@@ -23,11 +23,14 @@ tabelas EX
 | Maçã | 10 | R$ 5,00 |
 | Banana | 5 | R$ 3,50 |
 
-``sombreado``
+`sombreado` - nome de arquivos
+
+< file > - variáveis
 
 ├── <nome do arquivo>         # <descrição do arquivo>
 
 
 REPOSITÓRIOS VÁLIDOS
 https://github.com/TatuzinhoBixo/manual.git
+
 

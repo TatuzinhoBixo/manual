@@ -1,0 +1,52 @@
+" Numeros de linha
+set number
+set relativenumber
+
+" Indentacao
+set autoindent
+set smartindent
+set expandtab
+set tabstop=2
+set shiftwidth=2
+
+" Visual
+syntax on
+set showmatch
+set ruler
+set cursorline
+
+" Caracteres invisiveis
+set list
+set listchars=tab:>>.,trail:.
+
+" Busca
+set incsearch
+set hlsearch
+
+" Autocompletar
+set wildmenu
+set wildmode=longest:full,full
+
+" Historico e backup
+set history=1000
+set nobackup
+set nowritebackup
+set noswapfile
+
+" Scroll
+set scrolloff=5
+set sidescrolloff=5
+
+" Mouse
+set mouse=a
+
+" Clipboard do sistema
+set clipboard=unnamedplus
+
+" Remover espacos no final ao salvar
+autocmd BufWritePre * :%s/\s\+$//e
+
+" Atalhos
+nnoremap <Space>w :wq!<CR>
+nnoremap <Space>q :q<CR>
+nnoremap <Space>s :w<CR>
