@@ -86,6 +86,106 @@
         state: started
 
     # =========================================================
+    # 0.1) Pacotes base (mesmo do vm-template)
+    # =========================================================
+    - name: "[PACKAGES] Instalar pacotes base"
+      apt:
+        name:
+          - vim
+          - chrony
+          - nfs-common
+          - htop
+          - git
+          - telnet
+          - btop
+          - net-tools
+          - bind9-dnsutils
+        state: present
+        update_cache: true
+
+    # =========================================================
+    # 0.2) Timezone e Chrony
+    # =========================================================
+    - name: "[TIME] Configurar timezone America/Manaus"
+      timezone:
+        name: America/Manaus
+
+    - name: "[TIME] Habilitar e iniciar chrony"
+      systemd:
+        name: chrony
+        enabled: true
+        state: started
+
+    # =========================================================
+    # 0.3) .vimrc do usuário (mesmo do vm-template)
+    # =========================================================
+    - name: "[VIM] Criar diretório de undo do vim"
+      file:
+        path: "/home/{{ ansible_user }}/.vim/undodir"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: "[VIM] Configurar .vimrc"
+      copy:
+        dest: "/home/{{ ansible_user }}/.vimrc"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+        content: |
+          " ============================================================
+          " .vimrc - SysAdmin / DevOps (Celito)
+          " ============================================================
+          set number
+          set relativenumber
+          set cursorline
+          set scrolloff=8
+          set colorcolumn=120
+          set signcolumn=yes
+          set termguicolors
+          set noswapfile
+          set nobackup
+          set undofile
+          set undodir=~/.vim/undodir
+          set hidden
+          set confirm
+          set autoread
+          set updatetime=300
+          set hlsearch
+          set incsearch
+          set ignorecase
+          set smartcase
+          set tabstop=2
+          set shiftwidth=2
+          set expandtab
+          set smartindent
+          set autoindent
+          filetype plugin indent on
+          autocmd FileType yaml setlocal ts=2 sw=2 expandtab
+          autocmd FileType yml  setlocal ts=2 sw=2 expandtab
+          set clipboard=unnamedplus
+          set laststatus=2
+          set showcmd
+          set wildmenu
+          set wildmode=longest:full,full
+          set splitbelow
+          set splitright
+          syntax on
+          set background=dark
+          let mapleader = " "
+          nnoremap <leader>/ :nohlsearch<CR>
+          nnoremap <C-h> <C-w>h
+          nnoremap <C-j> <C-w>j
+          nnoremap <C-k> <C-w>k
+          nnoremap <C-l> <C-w>l
+          nnoremap <leader>w :w<CR>
+          nnoremap <leader>q :q!<CR>
+          nnoremap <leader>r :source ~/.vimrc<CR>
+          set encoding=utf-8
+          set fileencoding=utf-8
+
+    # =========================================================
     # A) SSH Hardening (CIS 5.2.x)
     # =========================================================
     - name: "[SSH] Configurar sshd_config hardening"
@@ -110,7 +210,14 @@
         - { regexp: '^#?LogLevel', line: 'LogLevel VERBOSE' }
         - { regexp: '^#?MaxSessions', line: 'MaxSessions 4' }
         - { regexp: '^#?UseDNS', line: 'UseDNS no' }
+        - { regexp: '^#?AllowUsers', line: 'AllowUsers {{ ansible_user }}' }
       notify: Restart sshd
+
+    - name: "[SSH] Travar senha do usuário tatu (herdado do template)"
+      user:
+        name: tatu
+        password_lock: true
+      failed_when: false
 
     - name: "[SSH] Garantir permissão restrita no sshd_config"
       file:

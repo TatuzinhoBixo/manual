@@ -31,6 +31,16 @@ variable "dns_servers" {
   type = list(string)
   default = ["192.168.1.40", "192.168.1.1"]
 }
+variable "template_vm_user" {
+  description = "Usuário existente na VM template (201) para bootstrap inicial"
+  type        = string
+  default     = "tatu"
+}
+variable "template_vm_password" {
+  description = "Senha do usuário da VM template (201)"
+  type        = string
+  sensitive   = true
+}
 variable "ssh_private_key_path" {
   description = "Caminho da chave SSH privada para acessar as VMs"
   type        = string

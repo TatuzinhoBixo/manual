@@ -287,6 +287,3 @@ Além dessa alteração, talvez a vm matriz não tenha instalado o cloud-init, p
 sudo apt update && sudo apt install cloud-init -y
 
 ---
-
-
-

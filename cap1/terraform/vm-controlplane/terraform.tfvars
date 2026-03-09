@@ -4,6 +4,7 @@ ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC9TWPvajhZkMTM7m6UKHTm/v
 #Opcionais (Já tem no default - so informe se for sobrescrever)
 #gateway = <GW>
 template_id = 201
+template_vm_password = "Arreto23"
 storage = "ssdevo"
 vms = {
   "vm-control1" = {

@@ -1,30 +1,24 @@
 resource "local_file" "ansible_inventory" {
   filename = "${path.module}/hosts.ini"
-  content  = <<-EOT
-[rke2_servers]
-%{~ for name, vm in var.vms ~}
-%{~ if vm.role == "server" ~}
-${name} ansible_host=${split("/", vm.ip)[0]}
-%{~ endif ~}
-%{~ endfor ~}
-[rke2_agents]
-%{~ for name, vm in var.vms ~}
-%{~ if vm.role == "agent" ~}
-${name} ansible_host=${split("/", vm.ip)[0]}
-%{~ endif ~}
-%{~ endfor ~}
-[all:vars]
-ansible_user = ${var.vm_user}
-ansible_ssh_private_key_file = ${var.ssh_private_key_path}
-ansible_ssh_common_args = '-o StrictHostKeyChecking=no'
-k8s_endpoint_ip = ${var.k8s_endpoint_ip}
-rke2_version = ${var.rke2_version}
-rke2_cni = ${var.rke2_cni}
-metallb_pool_name = ${var.metallb_pool_name}
-metallb_pool_name = ${var.metallb_pool_name}
-metallb_ip_range = ${var.metallb_ip_range}
-k8s_endpoint_dns = ${var.k8s_endpoint_dns}
-EOT
+  content = join("\n", flatten([
+    "[rke2_servers]",
+    [for name, vm in var.vms : "${name} ansible_host=${split("/", vm.ip)[0]}" if vm.role == "server"],
+    "",
+    "[rke2_agents]",
+    [for name, vm in var.vms : "${name} ansible_host=${split("/", vm.ip)[0]}" if vm.role == "agent"],
+    "",
+    "[all:vars]",
+    "ansible_user = ${var.vm_user}",
+    "ansible_ssh_private_key_file = ${var.ssh_private_key_path}",
+    "ansible_ssh_common_args = '-o StrictHostKeyChecking=no'",
+    "k8s_endpoint_ip = ${var.k8s_endpoint_ip}",
+    "rke2_version = ${var.rke2_version}",
+    "rke2_cni = ${var.rke2_cni}",
+    "metallb_pool_name = ${var.metallb_pool_name}",
+    "metallb_ip_range = ${var.metallb_ip_range}",
+    "k8s_endpoint_dns = ${var.k8s_endpoint_dns}",
+    "",
+  ]))
 }
 
 resource "null_resource" "wait_for_ssh" {
@@ -45,7 +39,7 @@ resource "null_resource" "wait_for_ssh" {
   }
 
   provisioner "remote-exec" {
-    inline = ["echo 'SSH pronto em ${each.key}'"]
+    inline = ["echo 'SSH pronto em ${each.key} como ${var.vm_user}'"]
   }
 }
 
@@ -60,6 +54,11 @@ resource "null_resource" "hardening_provisioner" {
     command     = "ansible-playbook -i hosts.ini hardening.yml"
     working_dir = path.module
   }
+
+  provisioner "local-exec" {
+    command     = "ansible-playbook -i hosts.ini install-rke2-cluster.yml"
+    working_dir = path.module
+  }
 }
 
 resource "proxmox_virtual_environment_file" "cloud_config" {
@@ -70,16 +69,25 @@ resource "proxmox_virtual_environment_file" "cloud_config" {
 
   source_raw {
     data = <<-EOF
+#cloud-config
 hostname: ${each.key}
 manage_etc_hosts: true
 package_update: true
 package_upgrade: true
+packages:
+  - qemu-guest-agent
 users:
+  - default
   - name: ${var.vm_user}
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
     ssh_authorized_keys:
       - ${var.ssh_public_key}
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
+ssh_pwauth: false
+runcmd:
+  - systemctl enable qemu-guest-agent
+  - systemctl start qemu-guest-agent
 EOF
     file_name = "cloud_config-${each.key}.yaml"
   }
