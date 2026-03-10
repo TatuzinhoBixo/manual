@@ -1,0 +1,76 @@
+# Istio Gateway Dedicado para Wordpress-2
+# IP: 192.168.1.75
+# Namespace: istio-ingress
+
+# ==========================================
+# SERVICE
+# ==========================================
+service:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.1.75
+  ports:
+    - name: status-port
+      port: 15021
+      protocol: TCP
+      targetPort: 15021
+    - name: http2
+      port: 80
+      protocol: TCP
+      targetPort: 80
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 443
+
+# ==========================================
+# AUTOSCALING
+# ==========================================
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+# ==========================================
+# RESOURCES
+# ==========================================
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 2000m
+    memory: 1024Mi
+
+# ==========================================
+# LABELS
+# ==========================================
+labels:
+  app: istio-ingressgateway-wp2
+  istio: ingressgateway
+  gateway: wordpress-2
+  environment: production
+
+# ==========================================
+# SELECTOR CUSTOMIZADO
+# ==========================================
+# Isso garante que o Gateway e VirtualService
+# usem esse gateway específico
+name: istio-ingressgateway-wp2
+
+# ==========================================
+# CONFIGURAÇÕES ADICIONAIS
+# ==========================================
+# Pod anti-affinity para distribuir em nodes diferentes
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - istio-ingressgateway-wp2
+          topologyKey: kubernetes.io/hostname

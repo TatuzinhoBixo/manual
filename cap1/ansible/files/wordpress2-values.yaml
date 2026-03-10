@@ -1,0 +1,79 @@
+replicaCount: 2
+
+wordpressBlogName: "Blog 2 Tatulab - Istio Mesh"
+wordpressScheme: https 
+
+persistence:
+  enabled: true
+  storageClass: longhorn
+  size: 10Gi
+  accessModes:
+    - ReadWriteMany
+
+resources:
+  requests:
+    cpu: 300m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi 
+
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 120
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+ingress:
+  enabled: false 
+
+service:
+  type: ClusterIP
+  port: 80
+
+metrics: 
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: wordpress-2
+    interval: 30s
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 1000m
+      memory: 128Mi 
+
+allowEmptyPassword: false
+allowOverrideNone: false 
+
+wordpressDebug: false 
+
+phpMemoryLimit: 125M
+phpUploadMaxFilesize: 64M 
+phpPostMaxSize: 64M
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In 
+                values:
+                  - wordpress
+          topologyKey: kubernetes.io/hostname
+
