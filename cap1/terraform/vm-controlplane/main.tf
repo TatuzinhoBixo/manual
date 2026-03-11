@@ -39,7 +39,11 @@ resource "null_resource" "wait_for_ssh" {
   }
 
   provisioner "remote-exec" {
-    inline = ["echo 'SSH pronto em ${each.key} como ${var.vm_user}'"]
+    inline = [
+      "echo 'SSH pronto em ${each.key} como ${var.vm_user}'",
+      "cloud-init status --wait || true",
+      "echo 'Cloud-init finalizado em ${each.key}'"
+    ]
   }
 }
 

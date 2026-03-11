@@ -61,7 +61,7 @@
       command: /tmp/install-rke2.sh
       environment:
         INSTALL_RKE2_TYPE: server
-        INSTALL_RKE2_VERSION: "{{ omit if rke2_version == 'latest' else rke2_version }}"
+        INSTALL_RKE2_VERSION: "{{ '' if rke2_version == 'latest' else rke2_version }}"
       when: inventory_hostname == groups['rke2_servers'][0]
 
     - name: Habilitar e iniciar serviço rke2-server
@@ -130,7 +130,7 @@
       command: /tmp/install-rke2.sh
       environment:
         INSTALL_RKE2_TYPE: server
-        INSTALL_RKE2_VERSION: "{{ omit if rke2_version == 'latest' else rke2_version }}"
+        INSTALL_RKE2_VERSION: "{{ '' if rke2_version == 'latest' else rke2_version }}"
       when: inventory_hostname != groups['rke2_servers'][0]
 
     - name: Habilitar e iniciar serviço rke2-server
@@ -235,7 +235,7 @@
       command: /tmp/install-rke2.sh
       environment:
         INSTALL_RKE2_TYPE: agent
-        INSTALL_RKE2_VERSION: "{{ omit if rke2_version == 'latest' else rke2_version }}"
+        INSTALL_RKE2_VERSION: "{{ '' if rke2_version == 'latest' else rke2_version }}"
 
     - name: Habilitar e iniciar serviço rke2-agent
       systemd:
