@@ -1,0 +1,157 @@
+---
+- name: Remover Istio Service Mesh
+  hosts: master
+  gather_facts: yes
+  vars:
+    istio_namespace: "istio-system"
+    istio_gateway_namespace: "istio-ingress"
+
+  tasks:
+    # ==========================================
+    # REMOVER GATEWAY
+    # ==========================================
+    - name: Desinstalar Istio Ingress Gateway
+      command: helm uninstall istio-ingressgateway --namespace {{ istio_gateway_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+      ignore_errors: yes
+
+    - name: Aguardar pods do Gateway serem removidos
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl wait --for=delete pod --all -n {{ istio_gateway_namespace }} --timeout=120s
+      ignore_errors: yes
+
+    - name: Deletar namespace istio-ingress
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl delete namespace {{ istio_gateway_namespace }} --timeout=120s
+      ignore_errors: yes
+
+    # ==========================================
+    # REMOVER ISTIOD (CONTROL PLANE)
+    # ==========================================
+    - name: Desinstalar Istiod
+      command: helm uninstall istiod --namespace {{ istio_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+      ignore_errors: yes
+
+    - name: Aguardar pods do Istiod serem removidos
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl wait --for=delete pod --all -n {{ istio_namespace }} --timeout=120s
+      ignore_errors: yes
+
+    # ==========================================
+    # REMOVER ISTIO BASE (CRDs)
+    # ==========================================
+    - name: Desinstalar Istio Base
+      command: helm uninstall istio-base --namespace {{ istio_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+      ignore_errors: yes
+
+    # ==========================================
+    # REMOVER CRDs MANUALMENTE
+    # ==========================================
+    - name: Listar CRDs do Istio
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get crd | grep 'istio.io\|gateway.networking.k8s.io' | awk '{print $1}'
+      register: istio_crds
+      ignore_errors: yes
+
+    - name: Remover finalizers dos CRDs do Istio
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl patch crd {{ item }} -p '{"metadata":{"finalizers":[]}}' --type=merge
+      loop: "{{ istio_crds.stdout_lines }}"
+      when: istio_crds.stdout_lines | length > 0
+      ignore_errors: yes
+
+    - name: Deletar CRDs do Istio
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl delete crd {{ item }} --wait=false
+      loop: "{{ istio_crds.stdout_lines }}"
+      when: istio_crds.stdout_lines | length > 0
+      ignore_errors: yes
+
+    # ==========================================
+    # REMOVER NAMESPACE ISTIO-SYSTEM
+    # ==========================================
+    - name: Deletar namespace istio-system
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl delete namespace {{ istio_namespace }} --timeout=180s
+      ignore_errors: yes
+
+    # ==========================================
+    # REMOVER LABELS DE INJEÇÃO (SE HOUVER)
+    # ==========================================
+    - name: Listar namespaces com label istio-injection
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get namespace -l istio-injection=enabled -o name
+      register: labeled_namespaces
+      ignore_errors: yes
+
+    - name: Remover label istio-injection dos namespaces
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl label {{ item }} istio-injection-
+      loop: "{{ labeled_namespaces.stdout_lines }}"
+      when: labeled_namespaces.stdout_lines | length > 0
+      ignore_errors: yes
+
+    # ==========================================
+    # REMOVER ISTIOCTL (OPCIONAL)
+    # ==========================================
+    - name: Remover istioctl do sistema
+      file:
+        path: /usr/local/bin/istioctl
+        state: absent
+
+    - name: Remover diretório temporário do Istio
+      shell: rm -rf /tmp/istio-*
+      ignore_errors: yes
+
+    # ==========================================
+    # LIMPEZA FINAL
+    # ==========================================
+    - name: Remover arquivo temporário
+      file:
+        path: /tmp/istio-gateway-default-values.yaml
+        state: absent
+
+    - name: Verificar se ainda existem recursos do Istio
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get all --all-namespaces | grep istio || echo "Nenhum recurso Istio encontrado"
+      register: remaining_resources
+      ignore_errors: yes
+
+    - name: Exibir mensagem de conclusão
+      debug:
+        msg:
+          - "=========================================="
+          - "Remoção do Istio Service Mesh concluída!"
+          - "=========================================="
+          - "Componentes removidos:"
+          - "  - Istio Ingress Gateway"
+          - "  - Istiod (Control Plane)"
+          - "  - Istio Base (CRDs)"
+          - "  - Namespace istio-system"
+          - "  - Namespace istio-ingress"
+          - "  - Labels de injeção automática"
+          - "  - istioctl"
+          - "=========================================="
+          - "Verificação de recursos remanescentes:"
+          - "{{ remaining_resources.stdout }}"
+          - "=========================================="
+
+    - name: Exibir recursos remanescentes (se houver)
+      debug:
+        var: remaining_resources.stdout_lines
+      when: remaining_resources.stdout != "Nenhum recurso Istio encontrado"

@@ -1,0 +1,60 @@
+global:
+  domain: "{{ argocd_domain }}"
+
+server:
+  replicas: 2
+  ingress:
+    enabled: false
+
+controller:
+  replicas: 2
+
+repoServer:
+  replicas: 2
+
+redis-ha:
+  enabled: true
+  master:
+    persistence:
+      enabled: true
+      storageClass: "{{ argocd_storage_class }}"
+      size: 8Gi
+  replica:
+    persistence:
+      enabled: true
+      storageClass: "{{ argocd_storage_class }}"
+      size: 8Gi
+
+applicationSet:
+  replicaCount: 2
+
+notifications:
+  enabled: true
+
+configs:
+  params:
+    server.insecure: true
+    controller.status.processors: "20"
+    controller.operation.processors: "10"
+  cm:
+    timeout.reconciliation: 180s
+  rbac:
+    policy.default: role:readonly
+    scopes: '[groups]'
+
+serverService:
+  type: ClusterIP
+
+repoServerService:
+  type: ClusterIP
+
+controllerService:
+  type: ClusterIP
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi

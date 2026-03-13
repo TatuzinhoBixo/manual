@@ -1,6 +1,6 @@
 ---
 - name: Instalar o istio e o gateway padrão
-  hosts: master1
+  hosts: master
   gather_facts: yes
   vars:
     istio_namespace: "istio-system"
@@ -13,7 +13,7 @@
   # =============================================================
   - name: Verifica se Helm já está instalado e instala se necessário
     command: which helm
-    registry: helm_check
+    register: helm_check
     ignore_errors: yes
     changed_when: false
 
@@ -25,7 +25,7 @@
     when: helm_check.rc != 0
 
   - name: instala o helm
-    shell: /tmp/get_helm.sh
+    shell: /tmp/get-helm.sh
     when: helm_check.rc != 0
 
   - name: Verificar versão do Helm instalada
@@ -42,7 +42,7 @@
 # =============================================================
 
   - name: Verificar se o istioctl já está instalado
-    command: which istioclt
+    command: which istioctl
     register: istioctl_check
     ignore_errors: yes
     changed_when: false
@@ -53,11 +53,16 @@
       curl -L https://istio.io/downloadIstio | sh -
     when: istioctl_check.rc != 0
 
+  - name: Encontrar diretório do Istio baixado
+    shell: ls -d /tmp/istio-* | tail -1
+    register: istio_dir
+    when: istioctl_check.rc != 0
+
   - name: Copia istioctl para o /usr/local/bin
     copy:
       src: "{{ istio_dir.stdout }}/bin/istioctl"
       dest: /usr/local/bin/istioctl
-      mode: '0775'
+      mode: '0755'
       remote_src: yes
     when: istioctl_check.rc != 0
 
@@ -68,7 +73,7 @@
 
   - name: Exibir versão do istioctl
     debug:
-      msg: "{{ istioctl_version.stdout }}""
+      msg: "{{ istioctl_version.stdout }}"
 
 # =============================================================
 # Criar Namespace
@@ -76,13 +81,13 @@
   
   - name: Criar o namespace do istio-system
     shell: |
-      export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
-      /var/lib/rancher/rke2/bin/kubectl create ns {{ istio_namespce }} --dry-run-client -o yaml | /var/lib/rancher/rke2/bin/kubectl apply -f -
+      export KUBECONFIG=/etc/rancher/rke2/rke2.yaml 
+      /var/lib/rancher/rke2/bin/kubectl create ns {{ istio_namespace }} --dry-run=client -o yaml | /var/lib/rancher/rke2/bin/kubectl apply -f -
   
   - name: Criar namespace do istio-ingress (para o gateways)
     shell: |
       export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
-      /var/lib/rancher/rke2/bin/kubectl create ns {{ istio_gateway_namespace }} --dry-run-client -o yaml | /var/lib/rancher/rke2/bin/kubectl apply -f -
+      /var/lib/rancher/rke2/bin/kubectl create ns {{ istio_gateway_namespace }} --dry-run=client -o yaml | /var/lib/rancher/rke2/bin/kubectl apply -f -
 
 # =============================================================
 # Instalar istio base (CRDs)
@@ -101,15 +106,15 @@
   - name: Instalar istio base (CRDs)
     command: >
       helm upgrade --install istio-base istio/base
-      -- namespace {{ istio_namespace }}
-      -- wait 
+      --namespace {{ istio_namespace }}
+      --wait
     environment:
       KUBECONFIG: /etc/rancher/rke2/rke2.yaml
 
   - name: Aguardar o CRDs estarem prontos
     shell: |
       export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
-      /var/lib/rancher/rke2/bin/kubectl wait --for condition=stablished ---timeout=60s crd/gateways.gateway.networking.k8s.io
+      /var/lib/rancher/rke2/bin/kubectl wait --for condition=established --timeout=60s crd/virtualservices.networking.istio.io
     ignore_errors: yes
 
 # =============================================================
@@ -145,111 +150,111 @@
 # Instalar o GW padrão
 # =============================================================
 
-- name: Copiar o arquivo de value do Gateway
-  copy:
-    src: files/istio-gateway-default-values.yaml
-    dest: /tmp/istio-gateway-default-values.yaml
+  - name: Copiar o arquivo de value do Gateway
+    copy:
+      src: files/istio-gateway-default-values.yaml
+      dest: /tmp/istio-gateway-default-values.yaml
 
-- name: Instalar o Istio Ingress Gateway 
-  command: >
-    helm upgrade --install istio-ingressgateway istio/gateway
-    --namespace {{ istio_gateway_namespace }}
-    --values /tmp/istio-gateway-default-values.yaml
-    --wait
-  environment:
-    KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+  - name: Instalar o Istio Ingress Gateway 
+    command: >
+      helm upgrade --install istio-ingressgateway istio/gateway
+      --namespace {{ istio_gateway_namespace }}
+      --values /tmp/istio-gateway-default-values.yaml
+      --wait
+    environment:
+      KUBECONFIG: /etc/rancher/rke2/rke2.yaml
 
-- name: Aguardar Gateway receber o imagePullPolicy
-  shell: |
-    export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
-    /var/lib/rancher/rke2/bin/kubectl get svc -n {{ istio_gateway_namespace }} istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  - name: Aguardar Gateway receber o IP
+    shell: |
+      export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+      /var/lib/rancher/rke2/bin/kubectl get svc -n {{ istio_gateway_namespace }} istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
     register: gateway_ip_check
     retries: 20
     delay: 5
     until: gateway_ip_check.stdout == gateway_ip
 
-- name: Exibir IP do Gateway
-  debug:
-    msg: "Istio Gateway instalado com IP: {{ gateway_ip_check.stdout}}"
+  - name: Exibir IP do Gateway
+    debug:
+      msg: "Istio Gateway instalado com IP: {{ gateway_ip_check.stdout}}"
 
 # =============================================================
 # Verificações
 # =============================================================
 
-- name: Verificar o status do Istio
-  command: istioctl verify-install
-  environment:
-    KUBECONFIG: /etc/rancher/rke2/rke2.yaml
-  register: istio_verify
-  ignore_errors: yes
+  - name: Verificar o status do Istio
+    command: istioctl verify
+    environment:
+      KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+    register: istio_verify
+    ignore_errors: yes
 
-- name: Exibir os resultados da verficação
-  debug:
-    var: istio_verify.stdout_lines
+  - name: Exibir os resultados da verficação
+    debug:
+      var: istio_verify.stdout_lines
 
-- name: Verificar namespace com injeção automática
-  shell: |
-    export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
-    /var/lib/rancher/rke2/bin/kubectl get ns -L istio-ingection
-  register: namespace_injection
+  - name: Verificar namespace com injeção automática
+    shell: |
+      export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+      /var/lib/rancher/rke2/bin/kubectl get ns -L istio-injection
+    register: namespace_injection
 
-- name: Mostrar os namespaces
-  debub: 
-    var: namespaces_injection.stdout_lines
+  - name: Mostrar os namespaces
+    debug: 
+      var: namespace_injection.stdout_lines
 
-- name: Exibir informações finais
-  debug:
-    msg:
-      - "=========================================="
-      - "Istio Service Mesh - FASE 1 Concluída!"
-      - "=========================================="
-      - "ISTIO CONTROL PLANE (ISTIOD)"
-      - "Namespace: {{ istio_namespace }}"
-      - "Status: Instalado e funcionando"
-      - "=========================================="
-      - "ISTIO GATEWAY PADRÃO"
-      - "Namespace: {{ istio_gateway_namespace }}"
-      - "IP: {{ gateway_ip }}"
-      - "Status: Instalado mas SEM USO (passivo)"
-      - "Portas: 80 (HTTP), 443 (HTTPS)"
-      - "=========================================="
-      - "INJEÇÃO AUTOMÁTICA DE SIDECAR"
-      - "Status: DESABILITADA em todos namespaces"
-      - "Nenhum namespace está com label istio-injection=enabled"
-      - "Istio está instalado mas PASSIVO (não interfere em nada)"
-      - "=========================================="
-      - "FASE 2 (Próximo passo):"
-      - "- Criar namespace wordpress-2"
-      - "- Habilitar injeção APENAS nesse namespace"
-      - "- Criar Gateway dedicado com IP 192.168.1.75"
-      - "=========================================="
-      - "COMANDOS ÚTEIS:"
-      - "Ver status: istioctl version"
-      - "Ver proxy status: istioctl proxy-status"
-      - "Ver config: istioctl analyze"
-      - "=========================================="
+  - name: Exibir informações finais
+    debug:
+      msg:
+        - "=========================================="
+        - "Istio Service Mesh - FASE 1 Concluída!"
+        - "=========================================="
+        - "ISTIO CONTROL PLANE (ISTIOD)"
+        - "Namespace: {{ istio_namespace }}"
+        - "Status: Instalado e funcionando"
+        - "=========================================="
+        - "ISTIO GATEWAY PADRÃO"
+        - "Namespace: {{ istio_gateway_namespace }}"
+        - "IP: {{ gateway_ip }}"
+        - "Status: Instalado mas SEM USO (passivo)"
+        - "Portas: 80 (HTTP), 443 (HTTPS)"
+        - "=========================================="
+        - "INJEÇÃO AUTOMÁTICA DE SIDECAR"
+        - "Status: DESABILITADA em todos namespaces"
+        - "Nenhum namespace está com label istio-injection=enabled"
+        - "Istio está instalado mas PASSIVO (não interfere em nada)"
+        - "=========================================="
+        - "FASE 2 (Próximo passo):"
+        - "- Criar namespace wordpress-2"
+        - "- Habilitar injeção APENAS nesse namespace"
+        - "- Criar Gateway dedicado com IP 192.168.1.75"
+        - "=========================================="
+        - "COMANDOS ÚTEIS:"
+        - "Ver status: istioctl version"
+        - "Ver proxy status: istioctl proxy-status"
+        - "Ver config: istioctl analyze"
+        - "=========================================="
 
-- name: Verificar pods do Istio
-  shell: |
-    export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
-    /var/lib/rancher/rke2/bin/kubectl get pods -n {{ istio_namespace }}
-  register: istio_pods
+  - name: Verificar pods do Istio
+    shell: |
+      export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+      /var/lib/rancher/rke2/bin/kubectl get pods -n {{ istio_namespace }}
+    register: istio_pods
 
-- name: Mostrar pods do Istio
-  debug:
-    var: istio_pods.stdout_lines
+  - name: Mostrar pods do Istio
+    debug:
+      var: istio_pods.stdout_lines
 
-- name: Verificar Gateway
-  shell: |
-    export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
-    /var/lib/rancher/rke2/bin/kubectl get pods,svc -n {{ istio_gateway_namespace }}
-  register: gateway_status
+  - name: Verificar Gateway
+    shell: |
+      export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+      /var/lib/rancher/rke2/bin/kubectl get pods,svc -n {{ istio_gateway_namespace }}
+    register: gateway_status
 
-- name: Mostrar status do Gateway
-  debug:
-    var: gateway_status.stdout_lines
+  - name: Mostrar status do Gateway
+    debug:
+      var: gateway_status.stdout_lines
 
-- name: Limpar arquivo temporário
-  file:
-    path: /tmp/istio-gateway-default-values.yaml
-    state: absent
+  - name: Limpar arquivo temporário
+    file:
+      path: /tmp/istio-gateway-default-values.yaml
+      state: absent

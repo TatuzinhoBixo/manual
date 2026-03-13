@@ -1,0 +1,258 @@
+---
+- name: Instalar Traefik + Argo CD com TLS
+  hosts: master
+  gather_facts: yes
+  vars:
+    argocd_namespace: "argocd"
+    argocd_domain: "argocd.tatulab.com.br"
+    argocd_tls_secret: "tls-tatulab"
+    argocd_storage_class: "nfs-storage"
+    traefik_lb_ip: "192.168.1.70"
+    traefik_replicas: 2
+
+  tasks:
+    # =============================================================
+    # Verifica se o Helm está instalado e instala se necessário
+    # =============================================================
+    - name: Verifica se Helm já está instalado
+      command: which helm
+      register: helm_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Baixar o script de instalação do Helm
+      get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get-helm.sh
+        mode: "0700"
+      when: helm_check.rc != 0
+
+    - name: Instalar o Helm
+      shell: /tmp/get-helm.sh
+      when: helm_check.rc != 0
+
+    - name: Verificar versão do Helm instalada
+      command: helm version --short
+      register: helm_version_output
+      changed_when: false
+
+    - name: Exibir versão do Helm
+      debug:
+        msg: "{{ helm_version_output.stdout }}"
+
+    # =============================================================
+    # Adicionar repositórios Helm
+    # =============================================================
+    - name: Adicionar repositório Helm do Traefik
+      command: helm repo add traefik https://traefik.github.io/charts
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+      register: traefik_repo
+      changed_when: "'has been added' in traefik_repo.stdout"
+      failed_when: traefik_repo.rc != 0 and 'already exists' not in traefik_repo.stderr
+
+    - name: Adicionar repositório Helm do Argo CD
+      command: helm repo add argo https://argoproj.github.io/argo-helm
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+      register: argo_repo
+      changed_when: "'has been added' in argo_repo.stdout"
+      failed_when: argo_repo.rc != 0 and 'already exists' not in argo_repo.stderr
+
+    - name: Atualizar repositórios Helm
+      command: helm repo update
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+
+    # =============================================================
+    # Criar Namespace
+    # =============================================================
+    - name: Criar namespace do Argo CD
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl create ns {{ argocd_namespace }} --dry-run=client -o yaml | /var/lib/rancher/rke2/bin/kubectl apply -f -
+
+    # =============================================================
+    # Instalar Traefik
+    # =============================================================
+    - name: Instalar Traefik com LoadBalancer
+      command: >
+        helm upgrade --install traefik traefik/traefik
+        --namespace {{ argocd_namespace }}
+        --set service.type=LoadBalancer
+        --set service.loadBalancerIP={{ traefik_lb_ip }}
+        --set deployment.replicas={{ traefik_replicas }}
+        --set ingressClass.enabled=true
+        --set ingressClass.isDefaultClass=false
+        --wait
+        --timeout 5m
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+
+    - name: Aguardar Traefik ficar pronto
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl wait --namespace {{ argocd_namespace }} \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/name=traefik \
+          --timeout=120s
+      register: traefik_ready
+      retries: 3
+      delay: 10
+      until: traefik_ready.rc == 0
+
+    - name: Verificar IP do LoadBalancer do Traefik
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get svc -n {{ argocd_namespace }} traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      register: traefik_ip
+      retries: 10
+      delay: 5
+      until: traefik_ip.stdout == traefik_lb_ip
+
+    - name: Exibir IP do Traefik
+      debug:
+        msg: "Traefik LoadBalancer IP: {{ traefik_ip.stdout }}"
+
+    - name: Verificar CRDs do Traefik
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get crd | grep traefik
+      register: traefik_crds
+
+    - name: Exibir CRDs do Traefik
+      debug:
+        var: traefik_crds.stdout_lines
+
+    # =============================================================
+    # Instalar o Argo CD
+    # =============================================================
+    - name: Copiar arquivo de values do Argo CD
+      template:
+        src: files/argocd-values.yaml
+        dest: /tmp/argocd-values.yaml
+
+    - name: Instalar o Argo CD via Helm
+      command: >
+        helm upgrade --install argocd argo/argo-cd
+        --namespace {{ argocd_namespace }}
+        --values /tmp/argocd-values.yaml
+        --wait
+        --timeout 10m
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+
+    - name: Aguardar ArgoCD Server ficar pronto
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl wait --namespace {{ argocd_namespace }} \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/name=argocd-server \
+          --timeout=300s
+      register: argocd_ready
+      retries: 3
+      delay: 10
+      until: argocd_ready.rc == 0
+
+    # =============================================================
+    # Criar IngressRoute do Traefik
+    # O IngressRoute pode ser aplicado mesmo sem o secret TLS existir.
+    # O Traefik só vai servir HTTPS quando o secret tls-tatulab for criado.
+    # =============================================================
+    - name: Copiar IngressRoute do Traefik
+      template:
+        src: files/argocd-ingressroute.yaml
+        dest: /tmp/argocd-ingressroute.yaml
+
+    - name: Aplicar IngressRoute do Traefik
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl apply -f /tmp/argocd-ingressroute.yaml
+
+    - name: Verificar IngressRoute criada
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get ingressroute -n {{ argocd_namespace }}
+      register: ingressroute_status
+
+    - name: Exibir IngressRoute
+      debug:
+        var: ingressroute_status.stdout_lines
+
+    # =============================================================
+    # Verificações
+    # =============================================================
+    - name: Verificar pods do Argo CD
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get pods -n {{ argocd_namespace }}
+      register: argocd_pods
+
+    - name: Mostrar pods do Argo CD
+      debug:
+        var: argocd_pods.stdout_lines
+
+    - name: Verificar serviços do Argo CD
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get svc -n {{ argocd_namespace }}
+      register: argocd_svc
+
+    - name: Mostrar serviços do Argo CD
+      debug:
+        var: argocd_svc.stdout_lines
+
+    # =============================================================
+    # Obter senha do admin
+    # =============================================================
+    - name: Obter senha inicial do admin
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl get secret argocd-initial-admin-secret -n {{ argocd_namespace }} \
+          -o jsonpath="{.data.password}" | base64 -d
+      register: argocd_admin_password
+      no_log: true
+
+    - name: Exibir informações finais
+      debug:
+        msg:
+          - "=========================================="
+          - "Traefik + Argo CD - Instalação Concluída!"
+          - "=========================================="
+          - "TRAEFIK"
+          - "Namespace: {{ argocd_namespace }}"
+          - "LoadBalancer IP: {{ traefik_lb_ip }}"
+          - "Réplicas: {{ traefik_replicas }}"
+          - "=========================================="
+          - "ARGO CD"
+          - "Namespace: {{ argocd_namespace }}"
+          - "Domínio: {{ argocd_domain }}"
+          - "Modo: insecure (Traefik termina o TLS)"
+          - "=========================================="
+          - "ACESSO:"
+          - "Usuário: admin"
+          - "Senha: {{ argocd_admin_password.stdout }}"
+          - "=========================================="
+          - "ARQUITETURA:"
+          - "Browser -> Traefik (443/TLS) -> ArgoCD (80/HTTP)"
+          - "=========================================="
+          - "PASSO MANUAL RESTANTE:"
+          - "Criar o secret TLS para ativar o HTTPS:"
+          - "  kubectl create secret tls {{ argocd_tls_secret }} --cert=cert.crt --key=chave.key -n {{ argocd_namespace }}"
+          - "Após criar, acesse: https://{{ argocd_domain }}"
+          - "=========================================="
+          - "COMANDOS ÚTEIS:"
+          - "Ver apps: kubectl get applications -n {{ argocd_namespace }}"
+          - "Ver pods: kubectl get pods -n {{ argocd_namespace }}"
+          - "Ver ingressroute: kubectl get ingressroute -n {{ argocd_namespace }}"
+          - "Logs traefik: kubectl logs -n {{ argocd_namespace }} -l app.kubernetes.io/name=traefik --tail=50"
+          - "Logs argocd: kubectl logs -n {{ argocd_namespace }} -l app.kubernetes.io/name=argocd-server --tail=50"
+          - "=========================================="
+
+    - name: Limpar arquivos temporários
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/argocd-values.yaml
+        - /tmp/argocd-ingressroute.yaml

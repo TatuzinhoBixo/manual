@@ -1,0 +1,60 @@
+---
+- name: Remover Traefik + Argo CD
+  hosts: master
+  gather_facts: yes
+  vars:
+    argocd_namespace: "argocd"
+
+  tasks:
+    # =============================================================
+    # Remover IngressRoute
+    # =============================================================
+    - name: Remover IngressRoute do ArgoCD
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl delete ingressroute argocd-server -n {{ argocd_namespace }} --ignore-not-found
+      ignore_errors: yes
+
+    # =============================================================
+    # Remover o Argo CD
+    # =============================================================
+    - name: Remover Argo CD via Helm
+      command: >
+        helm uninstall argocd
+        --namespace {{ argocd_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+      ignore_errors: yes
+
+    # =============================================================
+    # Remover Traefik
+    # =============================================================
+    - name: Remover Traefik via Helm
+      command: >
+        helm uninstall traefik
+        --namespace {{ argocd_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+      ignore_errors: yes
+
+    # =============================================================
+    # Remover namespace
+    # =============================================================
+    - name: Remover namespace do Argo CD
+      shell: |
+        export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+        /var/lib/rancher/rke2/bin/kubectl delete ns {{ argocd_namespace }} --ignore-not-found
+      register: ns_delete
+      ignore_errors: yes
+
+    - name: Exibir resultado da remoção
+      debug:
+        msg:
+          - "=========================================="
+          - "Traefik + Argo CD - Remoção Concluída!"
+          - "=========================================="
+          - "IngressRoute argocd-server removida"
+          - "Argo CD removido"
+          - "Traefik removido"
+          - "Namespace {{ argocd_namespace }} removido"
+          - "=========================================="
