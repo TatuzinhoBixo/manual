@@ -19,13 +19,13 @@ O NFS Storage Provisioner permite que pods compartilhem o mesmo sistema de arqui
 
 ## Variáveis de Configuração
 
-| Variável | Descrição | Exemplo |
-|:---------|:----------|:--------|
-| `<NOME_RELEASE>` | Nome do release Helm | nfs-provisioner |
-| `<NAMESPACE>` | Namespace do provisioner | storage |
-| `<IP_NFS>` | IP do servidor NFS | 192.168.1.10 |
-| `<CAMINHO_NFS>` | Caminho exportado no NFS | /nfs/kubernetes |
-| `<STORAGECLASS_NAME>` | Nome do StorageClass | nfs-storage |
+| Variável              | Descrição                | Exemplo         |
+| :-------------------- | :----------------------- | :-------------- |
+| `<NOME_RELEASE>`      | Nome do release Helm     | nfs-provisioner |
+| `<NAMESPACE>`         | Namespace do provisioner | storage         |
+| `<IP_NFS>`            | IP do servidor NFS       | 192.168.1.10    |
+| `<CAMINHO_NFS>`       | Caminho exportado no NFS | /nfs/kubernetes |
+| `<STORAGECLASS_NAME>` | Nome do StorageClass     | nfs-storage     |
 
 ---
 
@@ -61,14 +61,23 @@ Para adicionar múltiplos storages no cluster:
 
 ```bash
 helm install <NOME_RELEASE> nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \
-  --namespace <NAMESPACE> \
-  --create-namespace \
-  --set nfs.server=<IP_NFS> \
-  --set nfs.path=<CAMINHO_NFS> \
-  --set storageClass.name=<STORAGECLASS_NAME> \
-  --set storageClass.defaultClass=false \
-  --set storageClass.reclaimPolicy=Retain
+--namespace <NAMESPACE> \
+--create-namespace \
+--set nfs.server=<IP_NFS> \
+--set nfs.path=<CAMINHO_NFS> \
+--set storageClass.name=<STORAGECLASS_NAME> \
+--set storageClass.defaultClass=false \
+--set storageClass.reclaimPolicy=Retain
 ```
+
+helm install sc-sistema nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \
+--namespace sistema \
+--set nfs.server=10.100.171.30 \
+--set nfs.path=/nfs/rabbitmq \
+--set storageClass.name=sc-sistema \
+--set storageClass.defaultClass=false \
+--set storageClass.reclaimPolicy=Retain
+
 
 ---
 
@@ -132,11 +141,11 @@ spec:
 
 ## Políticas de Retenção
 
-| Política | Comportamento |
-|:---------|:--------------|
-| `Retain` | PV mantido após exclusão do PVC (dados preservados) |
-| `Delete` | PV excluído junto com o PVC |
-| `Recycle` | Dados apagados, PV reutilizado (deprecado) |
+| Política  | Comportamento                                       |
+| :-------- | :-------------------------------------------------- |
+| `Retain`  | PV mantido após exclusão do PVC (dados preservados) |
+| `Delete`  | PV excluído junto com o PVC                         |
+| `Recycle` | Dados apagados, PV reutilizado (deprecado)          |
 
 > **Recomendação**: Use `Retain` em produção para evitar perda acidental de dados.
 
@@ -144,10 +153,10 @@ spec:
 
 ## Modos de Acesso
 
-| Modo | Descrição |
-|:-----|:----------|
-| `ReadWriteOnce` (RWO) | Um único nó pode montar como leitura/escrita |
-| `ReadOnlyMany` (ROX) | Múltiplos nós podem montar como somente leitura |
+| Modo                  | Descrição                                       |
+| :-------------------- | :---------------------------------------------- |
+| `ReadWriteOnce` (RWO) | Um único nó pode montar como leitura/escrita    |
+| `ReadOnlyMany` (ROX)  | Múltiplos nós podem montar como somente leitura |
 | `ReadWriteMany` (RWX) | Múltiplos nós podem montar como leitura/escrita |
 
 > NFS suporta todos os modos de acesso, sendo ideal para `ReadWriteMany`.
