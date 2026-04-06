@@ -361,3 +361,49 @@
           - "{{ pool_output.stdout_lines }}"
           - "L2Advertisement:"
           - "{{ l2_output.stdout_lines }}"
+
+# =============================================================
+# Play 8: Instalar CRDs do Prometheus Operator via Helm
+# Instala apenas os CRDs necessários para uso futuro do Prometheus
+# =============================================================
+- name: Instalar Prometheus Operator CRDs
+  hosts: rke2_servers
+  run_once: true
+  environment:
+    KUBECONFIG: /etc/rancher/rke2/rke2.yaml
+    PATH: "{{ ansible_env.PATH }}:/var/lib/rancher/rke2/bin:/usr/local/bin"
+  tasks:
+    - name: Adicionar repositório prometheus-community
+      command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      register: prom_repo_add
+      changed_when: "'has been added' in prom_repo_add.stdout"
+      failed_when: prom_repo_add.rc != 0 and 'already exists' not in prom_repo_add.stderr
+
+    - name: Atualizar repositórios Helm
+      command: helm repo update
+
+    - name: Verificar se prometheus-operator-crds já está instalado
+      command: helm status prometheus-operator-crds -n prometheus-operator-crds
+      register: prom_crds_status
+      ignore_errors: true
+      changed_when: false
+
+    - name: Instalar prometheus-operator-crds via Helm
+      command: >
+        helm install prometheus-operator-crds prometheus-community/prometheus-operator-crds
+        -n prometheus-operator-crds
+        --create-namespace
+        --wait
+        --timeout 3m
+      when: prom_crds_status.rc != 0
+
+    - name: Verificar CRDs do Prometheus instalados
+      command: kubectl get crds -l app.kubernetes.io/part-of=prometheus-operator
+      register: prom_crds_output
+      changed_when: false
+
+    - name: Exibir CRDs do Prometheus
+      debug:
+        msg:
+          - "Prometheus Operator CRDs instalados:"
+          - "{{ prom_crds_output.stdout_lines }}"
