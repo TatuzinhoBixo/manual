@@ -1,0 +1,244 @@
+# Istio Ingress Gateway dedicado para WordPress
+# Substitua as variáveis <...> pelos valores do seu ambiente
+#
+# Variáveis:
+#   <NAMESPACE> - Namespace da aplicação (ex: wordpress)
+#   <VERSAO_ISTIO> - Versão do Istio instalado (ex: 1.27.0)
+#   <IP_INGRESS_GATEWAY> - IP do LoadBalancer (ex: 192.168.1.75)
+#   <NOME_SECRET_TLS> - Nome do secret TLS (ex: tls-certificado)
+#   <DOMINIO_WILDCARD> - Domínio wildcard (ex: *.exemplo.com.br)
+#   <DOMINIO> - Domínio do WordPress (ex: wordpress.exemplo.com.br)
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wordpress-ingressgateway
+  namespace: <NAMESPACE>
+  labels:
+    app: wordpress-ingressgateway
+    istio: ingressgateway
+---
+# Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: <NAMESPACE>
+  name: wordpress-ingressgateway
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wordpress-ingressgateway
+  namespace: <NAMESPACE>
+subjects:
+- kind: ServiceAccount
+  name: wordpress-ingressgateway
+  namespace: <NAMESPACE>
+roleRef:
+  kind: Role
+  name: wordpress-ingressgateway
+  apiGroup: rbac.authorization.k8s.io
+---
+# Deployment do Istio Ingressgateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress-ingressgateway
+  namespace: <NAMESPACE>
+  labels:
+    app: wordpress-ingressgateway
+    istio: ingressgateway
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wordpress-ingressgateway
+      istio: ingressgateway
+  template:
+    metadata:
+      labels:
+        app: wordpress-ingressgateway
+        istio: ingressgateway
+        version: v1
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: wordpress-ingressgateway
+      containers:
+      - name: istio-proxy
+        image: docker.io/istio/proxyv2:<VERSAO_ISTIO>
+        ports:
+        - containerPort: 15021
+          protocol: TCP
+        - containerPort: 8080
+          protocol: TCP
+        - containerPort: 8443
+          protocol: TCP
+        args:
+        - proxy
+        - router
+        - --domain
+        - $(POD_NAMESPACE).svc.cluster.local
+        - --proxyLogLevel=warning
+        - --proxyComponentLogLevel=misc:error
+        - --log_output_level=default:info
+        env:
+        - name: JWT_POLICY
+          value: third-party-jwt
+        - name: PILOT_CERT_PROVIDER
+          value: istiod
+        - name: CA_ADDR
+          value: istiod.istio-system.svc:15012
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: INSTANCE_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.podIP
+        - name: HOST_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.hostIP
+        - name: SERVICE_ACCOUNT
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.serviceAccountName
+        - name: ISTIO_META_WORKLOAD_NAME
+          value: wordpress-ingressgateway
+        - name: ISTIO_META_OWNER
+          value: kubernetes://apis/apps/v1/namespaces/<NAMESPACE>/deployments/wordpress-ingressgateway
+        - name: ISTIO_META_MESH_ID
+          value: cluster.local
+        - name: TRUST_DOMAIN
+          value: cluster.local
+        - name: ISTIO_META_UNPRIVILEGED_POD
+          value: "true"
+        - name: ISTIO_META_CLUSTER_ID
+          value: Kubernetes
+        volumeMounts:
+        - name: workload-socket
+          mountPath: /var/run/secrets/workload-spiffe-uds
+        - name: credential-socket
+          mountPath: /var/run/secrets/credential-uds
+        - name: workload-certs
+          mountPath: /var/run/secrets/workload-spiffe-credentials
+        - name: istio-envoy
+          mountPath: /etc/istio/proxy
+        - name: config-volume
+          mountPath: /etc/istio/config
+        - name: istiod-ca-cert
+          mountPath: /var/run/secrets/istio
+          readOnly: true
+        - name: istio-token
+          mountPath: /var/run/secrets/tokens
+          readOnly: true
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+      volumes:
+      - name: workload-socket
+        emptyDir: {}
+      - name: credential-socket
+        emptyDir: {}
+      - name: workload-certs
+        emptyDir: {}
+      - name: istiod-ca-cert
+        configMap:
+          name: istio-ca-root-cert
+      - name: istio-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: istio-token
+              expirationSeconds: 43200
+              audience: istio-ca
+      - name: istio-envoy
+        emptyDir: {}
+      - name: config-volume
+        configMap:
+          name: istio
+          optional: true
+---
+# Service do Ingressgateway
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-ingressgateway
+  namespace: <NAMESPACE>
+  labels:
+    app: wordpress-ingressgateway
+    istio: ingressgateway
+spec:
+  type: LoadBalancer
+  loadBalancerIP: <IP_INGRESS_GATEWAY>
+  selector:
+    app: wordpress-ingressgateway
+    istio: ingressgateway
+  ports:
+  - port: 15021
+    targetPort: 15021
+    name: status-port
+    protocol: TCP
+  - port: 80
+    targetPort: 8080
+    name: http2
+    protocol: TCP
+  - port: 443
+    targetPort: 8443
+    name: https
+    protocol: TCP
+---
+# Gateway Istio
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: wordpress-gateway
+  namespace: <NAMESPACE>
+spec:
+  selector:
+    app: wordpress-ingressgateway
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: <NOME_SECRET_TLS>
+    hosts:
+    - "<DOMINIO_WILDCARD>"
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "<DOMINIO_WILDCARD>"
+    tls:
+      httpsRedirect: true

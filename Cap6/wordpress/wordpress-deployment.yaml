@@ -1,0 +1,106 @@
+# Deployment e Service do WordPress
+# Substitua <NAMESPACE> pelo namespace da sua aplicação
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  namespace: <NAMESPACE>
+  labels:
+    app: wordpress
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpress
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        version: v1
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+      - name: wordpress
+        image: wordpress:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: WORDPRESS_DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: wordpress-config
+              key: WORDPRESS_DB_HOST
+        - name: WORDPRESS_DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: wordpress-config
+              key: WORDPRESS_DB_NAME
+        - name: WORDPRESS_DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: wordpress-config
+              key: WORDPRESS_DB_USER
+        - name: WORDPRESS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: wordpress-secret
+              key: WORDPRESS_DB_PASSWORD
+        - name: WORDPRESS_TABLE_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              name: wordpress-config
+              key: WORDPRESS_TABLE_PREFIX
+        volumeMounts:
+        - name: wordpress-core
+          mountPath: /var/www/html
+        - name: wordpress-content
+          mountPath: /var/www/html/wp-content
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: wordpress-core
+        persistentVolumeClaim:
+          claimName: wordpress-core
+      - name: wordpress-content
+        persistentVolumeClaim:
+          claimName: wordpress-content
+---
+# Service do WordPress
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-service
+  namespace: <NAMESPACE>
+  labels:
+    app: wordpress
+spec:
+  selector:
+    app: wordpress
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP

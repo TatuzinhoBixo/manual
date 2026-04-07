@@ -1,0 +1,22 @@
+# VirtualService para roteamento do WordPress
+# Substitua as variáveis <...> pelos valores do seu ambiente
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: wordpress-vs
+  namespace: <NAMESPACE>
+spec:
+  hosts:
+  - <DOMINIO>
+  gateways:
+  - wordpress-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: wordpress-service
+        port:
+          number: 80

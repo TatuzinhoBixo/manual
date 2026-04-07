@@ -1,0 +1,30 @@
+# Persistent Volume Claims para WordPress
+# Substitua as variáveis <...> pelos valores do seu ambiente
+---
+# PVC para arquivos core do WordPress
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-core
+  namespace: <NAMESPACE>
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: <STORAGECLASS>
+  resources:
+    requests:
+      storage: 5Gi
+---
+# PVC para wp-content (uploads, themes, plugins)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-content
+  namespace: <NAMESPACE>
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: <STORAGECLASS>
+  resources:
+    requests:
+      storage: 10Gi
