@@ -1,74 +1,113 @@
-# Instalação do Traefik para Namespace Observability
+# Traefik — Múltiplas Instâncias no Mesmo Cluster
 
-## Informações da Instalação
+## Descrição
 
-**Data:** 28/01/2026  
-**Cluster:** Kubernetes RKE2 - Homelab tatulab.com.br  
-**Namespace:** observability  
-**Chart:** traefik/traefik  
-**IP Fixo:** 192.168.1.72  
-**IngressClass:** traefik-observability
+Em alguns cenários é necessário rodar **mais de uma instância do Traefik** no mesmo cluster Kubernetes, cada uma com sua própria `IngressClass`, IP de LoadBalancer e escopo de namespaces. Isso evita que um único Traefik centralize o tráfego de toda a infraestrutura, permitindo isolamento entre ambientes ou equipes.
+
+> **Pré-requisito:** Ter o tutorial base do Traefik como referência para conceitos gerais (entrypoints, IngressRoute, Middlewares, CRDs).
 
 ---
 
-## Objetivo
+## Quando usar múltiplas instâncias?
 
-Instalar um Traefik **exclusivo** para o namespace `observability` para expor apenas o Grafana.
+| Situação                                   | Motivo                                     |
+| :----------------------------------------- | :----------------------------------------- |
+| Traefik já instalado em outro namespace    | Evitar conflito de IngressClass            |
+| Isolamento de tráfego por equipe/projeto   | Cada instância cuida do seu namespace      |
+| IPs de LoadBalancer diferentes por serviço | Ex: observability em IP separado do argocd |
+| Políticas de segurança por namespace       | `allowCrossNamespace: false` por instância |
 
 ---
 
-## Por que IngressClass diferente?
+## Conceito: IngressClass
 
-**Problema:** Já existe um Traefik instalado no namespace `argocd` com IngressClass `traefik`.
+Cada instância do Traefik deve ter uma `IngressClass` com nome **único** no cluster. É através dela que os recursos `Ingress` e `IngressRoute` sabem qual controller deve processá-los.
 
-**Solução:** Criar IngressClass com nome `traefik-observability` para evitar conflito.
+```
+IngressClass: traefik          → Traefik instalado no namespace argocd
+IngressClass: traefik-observability  → Traefik instalado no namespace observability
+```
+
+Se duas instâncias compartilharem a mesma IngressClass, ambas tentarão processar as mesmas rotas, causando comportamento imprevisível.
 
 ---
 
 ## Pré-requisitos
 
-### 1. Repositório Helm
+- Cluster Kubernetes funcional
+- Helm instalado e configurado
+- `kubectl` com acesso ao cluster
+- MetalLB instalado e configurado com range de IPs disponível
+- Repositório Helm do Traefik adicionado:
+
 ```bash
 helm repo add traefik https://traefik.github.io/charts
 helm repo update
 ```
 
-### 2. Verificar namespace
-```bash
-kubectl get namespace observability
-```
+- Secret TLS disponível no namespace da nova instância:
 
-### 3. Verificar Secret TLS
 ```bash
-kubectl get secret tls-tatulab -n observability
+kubectl get secret <NOME_SECRET_TLS> -n <NAMESPACE>
 ```
 
 ---
 
-## Configuração (values.yaml)
+## Variáveis de Configuração
 
-### Arquivo: traefik-values.yaml
+| Variável            | Descrição                              | Exemplo                |
+| :------------------ | :------------------------------------- | :--------------------- |
+| `<NOME_RELEASE>`    | Nome do release Helm                   | traefik-observability  |
+| `<NAMESPACE>`       | Namespace desta instância              | observability          |
+| `<INGRESS_CLASS>`   | Nome único da IngressClass             | traefik-observability  |
+| `<IP_LOADBALANCER>` | IP fixo exclusivo desta instância      | 192.168.1.72           |
+| `<NOME_SECRET_TLS>` | Nome do Secret com certificado TLS     | tls-tatulab            |
+| `<DOMINIO>`         | Domínio a ser exposto                  | grafana.tatulab.com.br |
+| `<NOME_SERVICO>`    | Nome do Service Kubernetes do backend  | meu-servico            |
+| `<PORTA_SERVICO>`   | Porta do Service Kubernetes do backend | 80                     |
+
+---
+
+## Etapa 1: Verificar instâncias existentes
+
+Antes de instalar, identifique as instâncias já existentes para evitar conflitos:
+
+```bash
+# Listar IngressClasses existentes
+kubectl get ingressclass
+
+# Listar releases Traefik instalados
+helm list -A | grep traefik
+
+# Listar Services do tipo LoadBalancer (verificar IPs em uso)
+kubectl get svc -A | grep LoadBalancer
+```
+
+---
+
+## Etapa 2: Criar arquivo values.yaml
+
 ```yaml
-# Nome da IngressClass diferente
+# traefik-<NAMESPACE>-values.yaml
+
+# IngressClass exclusiva desta instância
 ingressClass:
   enabled: true
   isDefaultClass: false
-  name: traefik-observability
+  name: <INGRESS_CLASS>
 
 # Deployment
 deployment:
   enabled: true
-  kind: DaemonSet
-  replicas: 1
+  replicas: <NUM_REPLICAS>
 
-# Service
+# Service LoadBalancer com IP exclusivo
 service:
   enabled: true
   type: LoadBalancer
-  loadBalancerIP: 192.168.1.72
-  annotations: {}
+  loadBalancerIP: <IP_LOADBALANCER>
 
-# Ports
+# Entrypoints
 ports:
   web:
     port: 80
@@ -88,19 +127,22 @@ logs:
   access:
     enabled: true
 
-# IngressRoute CRD
+# Dashboard desabilitado (recomendado para instâncias secundárias)
 ingressRoute:
   dashboard:
     enabled: false
 
-# Providers
+# Providers — restrito ao namespace desta instância
 providers:
   kubernetesCRD:
     enabled: true
     allowCrossNamespace: false
+    namespaces:
+      - <NAMESPACE>
   kubernetesIngress:
     enabled: true
-    allowExternalNameServices: true
+    namespaces:
+      - <NAMESPACE>
 
 # Resources
 resources:
@@ -112,387 +154,263 @@ resources:
     memory: 512Mi
 ```
 
----
+> **Nota — `allowCrossNamespace: false`:** Impede que esta instância processe `IngressRoutes` de outros namespaces. Recomendado para isolamento de tráfego.
 
-## Decisões de Configuração
-
-### 1. IngressClass
-```yaml
-ingressClass:
-  enabled: true
-  isDefaultClass: false
-  name: traefik-observability
-```
-- **Nome:** `traefik-observability` (diferente do Traefik do ArgoCD)
-- **Default:** `false` (não é IngressClass padrão do cluster)
-
-### 2. Deployment
-```yaml
-deployment:
-  kind: DaemonSet
-  replicas: 1
-```
-- **Tipo:** DaemonSet (1 pod por node selecionado)
-- **Motivo:** Garantir que o Traefik rode em node específico se necessário
-
-### 3. Service LoadBalancer
-```yaml
-service:
-  type: LoadBalancer
-  loadBalancerIP: 192.168.1.72
-```
-- **IP Fixo:** 192.168.1.72
-- **Motivo:** IP fixo para DNS apontar para grafana.tatulab.com.br
-
-### 4. Ports
-- **Web:** Porta 80 (HTTP)
-- **Websecure:** Porta 443 (HTTPS)
-
-### 5. Providers
-```yaml
-providers:
-  kubernetesCRD:
-    enabled: true
-    allowCrossNamespace: false
-```
-- **kubernetesCRD:** Habilita IngressRoute (Traefik CRD)
-- **allowCrossNamespace:** `false` (apenas namespace observability)
-- **kubernetesIngress:** Suporta Ingress padrão também
-
-### 6. Dashboard
-```yaml
-ingressRoute:
-  dashboard:
-    enabled: false
-```
-- **Motivo:** Dashboard do Traefik desabilitado (não necessário)
+> **Nota — `namespaces`:** Restringe o watch de recursos ao namespace declarado. Sem isso, o Traefik observa todos os namespaces do cluster mesmo com `allowCrossNamespace: false`.
 
 ---
 
-## Comandos de Instalação
+## Etapa 3: Instalar a instância
 
-### 1. Criar arquivo de configuração
 ```bash
-cat > traefik-values.yaml << 'YAML'
-# Cole o conteúdo do values.yaml aqui
-YAML
+helm install <NOME_RELEASE> traefik/traefik \
+  -f traefik-<NAMESPACE>-values.yaml \
+  -n <NAMESPACE>
 ```
-
-### 2. Instalar via Helm
-```bash
-helm install traefik traefik/traefik \
-  -f traefik-values.yaml \
-  -n observability
-```
-
-### 3. Verificar instalação
-```bash
-kubectl get pods -n observability | grep traefik
-kubectl get svc traefik -n observability
-kubectl get ingressclass traefik-observability
-```
-
-### 4. Verificar IP atribuído
-```bash
-kubectl get svc traefik -n observability -o wide
-```
-
-Deve mostrar: `EXTERNAL-IP: 192.168.1.72`
 
 ---
 
-## IngressRoute para Grafana
+## Etapa 4: Verificar instalação
 
-### Arquivo: grafana-ingressroute.yaml
+```bash
+# Verificar pod
+kubectl get pods -n <NAMESPACE> | grep traefik
+
+# Verificar Service e IP atribuído
+kubectl get svc -n <NAMESPACE> | grep traefik
+
+# Verificar IngressClass criada
+kubectl get ingressclass <INGRESS_CLASS>
+```
+
+O campo `EXTERNAL-IP` do Service deve mostrar `<IP_LOADBALANCER>`.
+
+---
+
+## Etapa 5: Criar IngressRoute
+
 ```yaml
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: grafana-ingressroute
-  namespace: observability
+  name: <NOME_SERVICO>-ingressroute
+  namespace: <NAMESPACE>
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`grafana.tatulab.com.br`)
+    - match: Host(`<DOMINIO>`)
       kind: Rule
       services:
-        - name: kube-prometheus-stack-grafana
-          port: 80
+        - name: <NOME_SERVICO>
+          port: <PORTA_SERVICO>
   tls:
-    secretName: tls-tatulab
+    secretName: <NOME_SECRET_TLS>
 ```
 
-### Aplicar IngressRoute
 ```bash
-kubectl apply -f grafana-ingressroute.yaml
-```
+kubectl apply -f <NOME_SERVICO>-ingressroute.yaml
 
-### Verificar IngressRoute
-```bash
-kubectl get ingressroute -n observability
-kubectl describe ingressroute grafana-ingressroute -n observability
+# Verificar
+kubectl get ingressroute -n <NAMESPACE>
+kubectl describe ingressroute <NOME_SERVICO>-ingressroute -n <NAMESPACE>
 ```
 
 ---
 
-## Configuração DNS
+## Etapa 6: Configurar DNS
 
-### Adicionar entrada no DNS ou /etc/hosts
+Adicione o registro A no seu servidor DNS apontando para o IP desta instância:
 
-**DNS (recomendado para produção):**
 ```
-grafana.tatulab.com.br  A  192.168.1.72
+<DOMINIO>  A  <IP_LOADBALANCER>
 ```
 
-**Ou /etc/hosts (teste local):**
+Para teste local via `/etc/hosts`:
+
 ```bash
-echo "192.168.1.72 grafana.tatulab.com.br" | sudo tee -a /etc/hosts
+echo "<IP_LOADBALANCER> <DOMINIO>" | sudo tee -a /etc/hosts
 ```
 
 ---
 
-## Testes de Acesso
+## Etapa 7: Validar acesso
 
-### 1. Testar resolução DNS
 ```bash
-nslookup grafana.tatulab.com.br
-# ou
-ping grafana.tatulab.com.br
-```
+# Verificar resolução DNS
+nslookup <DOMINIO>
 
-### 2. Testar HTTP (deve redirecionar para HTTPS)
-```bash
-curl -I http://grafana.tatulab.com.br
-```
+# Testar HTTP
+curl -I http://<DOMINIO>
 
-### 3. Testar HTTPS
-```bash
-curl -k https://grafana.tatulab.com.br
-```
+# Testar HTTPS
+curl -k https://<DOMINIO>
 
-### 4. Acessar via navegador
-```
-https://grafana.tatulab.com.br
-```
-
-**Credenciais:**
-- **User:** admin
-- **Password:** SuaSenhaAqui123!
-
----
-
-## Verificar Logs do Traefik
-
-### Logs do pod
-```bash
-kubectl logs -n observability -l app.kubernetes.io/name=traefik --tail=100 -f
-```
-
-### Verificar rotas carregadas
-```bash
-kubectl logs -n observability -l app.kubernetes.io/name=traefik | grep grafana.tatulab.com.br
+# Testar com Host header direto no IP (sem DNS)
+curl -H "Host: <DOMINIO>" -k https://<IP_LOADBALANCER>
 ```
 
 ---
 
-## Atualização de Configuração
+## Visão geral: múltiplas instâncias no cluster
 
-Caso precise alterar alguma configuração:
-```bash
-# Editar traefik-values.yaml
-vim traefik-values.yaml
-
-# Aplicar mudanças
-helm upgrade traefik traefik/traefik \
-  -f traefik-values.yaml \
-  -n observability
+```
+Cluster Kubernetes
+│
+├── namespace: argocd
+│   ├── Traefik (release: traefik)
+│   │   ├── IngressClass: traefik
+│   │   ├── LoadBalancer IP: <IP_INSTANCIA_1>
+│   │   └── Watch: namespace argocd
+│   └── IngressRoute: argo.tatulab.com.br
+│
+├── namespace: observability
+│   ├── Traefik (release: traefik-observability)
+│   │   ├── IngressClass: traefik-observability
+│   │   ├── LoadBalancer IP: <IP_INSTANCIA_2>
+│   │   └── Watch: namespace observability
+│   └── IngressRoute: grafana.tatulab.com.br
+│
+└── namespace: outro-projeto
+    ├── Traefik (release: traefik-outro-projeto)
+    │   ├── IngressClass: traefik-outro-projeto
+    │   ├── LoadBalancer IP: <IP_INSTANCIA_3>
+    │   └── Watch: namespace outro-projeto
+    └── IngressRoute: app.tatulab.com.br
 ```
 
 ---
 
-## Desinstalação
+## Atualizar configuração
 
-### Remover IngressRoute
 ```bash
-kubectl delete -f grafana-ingressroute.yaml
+vim traefik-<NAMESPACE>-values.yaml
+
+helm upgrade <NOME_RELEASE> traefik/traefik \
+  -f traefik-<NAMESPACE>-values.yaml \
+  -n <NAMESPACE>
 ```
 
-### Desinstalar Traefik
+---
+
+## Desinstalar instância
+
 ```bash
-helm uninstall traefik -n observability
+# Remover IngressRoutes do namespace
+kubectl delete ingressroute --all -n <NAMESPACE>
+
+# Desinstalar release Helm
+helm uninstall <NOME_RELEASE> -n <NAMESPACE>
+
+# Remover IngressClass (se não for removida automaticamente)
+kubectl delete ingressclass <INGRESS_CLASS>
 ```
 
-### Remover IngressClass (se necessário)
+> **Atenção:** A desinstalação do Traefik não remove os CRDs do cluster (como `IngressRoute`, `Middleware`, etc.) pois eles são compartilhados entre instâncias. Para removê-los, verifique antes se nenhuma outra instância os utiliza.
+
+---
+
+## ServiceMonitor — Métricas do Traefik no Prometheus
+
+Caso o Prometheus Operator esteja instalado no cluster, crie um `ServiceMonitor` para coletar métricas desta instância:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: <NOME_RELEASE>-metrics
+  namespace: <NAMESPACE>
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  namespaceSelector:
+    matchNames:
+      - <NAMESPACE>
+  endpoints:
+    - port: metrics
+      interval: 30s
+```
+
 ```bash
-kubectl delete ingressclass traefik-observability
+kubectl apply -f traefik-servicemonitor.yaml
+```
+
+---
+
+## Comandos Úteis
+
+```bash
+# Logs da instância
+kubectl logs -n <NAMESPACE> -l app.kubernetes.io/name=traefik -f
+
+# Logs filtrando erros
+kubectl logs -n <NAMESPACE> -l app.kubernetes.io/name=traefik | grep -i error
+
+# Listar todos os IngressRoutes do namespace
+kubectl get ingressroute -n <NAMESPACE>
+
+# Listar todas as IngressClasses do cluster
+kubectl get ingressclass
+
+# Listar todos os Services LoadBalancer do cluster (visão geral de IPs)
+kubectl get svc -A | grep LoadBalancer
+
+# Listar todos os releases Traefik instalados
+helm list -A | grep traefik
 ```
 
 ---
 
 ## Troubleshooting
 
-### Problema: IP não foi atribuído ao Service
+### IP não atribuído ao Service
 
-**Verificar:**
 ```bash
-kubectl describe svc traefik -n observability
+kubectl describe svc <NOME_RELEASE> -n <NAMESPACE>
 ```
 
-**Possível causa:** MetalLB ou LoadBalancer não configurado.
+Verificar se o IP está dentro do range configurado no MetalLB e se não está em uso por outro Service.
 
-**Solução:** Verificar se o IP 192.168.1.72 está no range do LoadBalancer.
+### IngressRoute não processada
 
----
-
-### Problema: IngressRoute não funciona
-
-**Verificar se o IngressRoute foi criado:**
 ```bash
-kubectl get ingressroute -n observability
+# Verificar se a IngressClass está correta no IngressRoute
+kubectl get ingressroute <NOME> -n <NAMESPACE> -o yaml
+
+# Verificar se o Traefik está observando o namespace correto
+kubectl logs -n <NAMESPACE> -l app.kubernetes.io/name=traefik | grep -i namespace
 ```
 
-**Verificar logs do Traefik:**
+### Duas instâncias processando a mesma rota
+
+Verificar se há duplicidade de IngressClass:
+
 ```bash
-kubectl logs -n observability -l app.kubernetes.io/name=traefik | grep ERROR
+kubectl get ingressclass
 ```
 
-**Verificar se o Service do Grafana existe:**
+Cada instância deve ter um nome de IngressClass único. Verificar também se os `IngressRoutes` estão referenciando a IngressClass correta.
+
+### Certificado TLS não encontrado
+
 ```bash
-kubectl get svc kube-prometheus-stack-grafana -n observability
+# Verificar se o Secret existe no namespace correto
+kubectl get secret <NOME_SECRET_TLS> -n <NAMESPACE>
+
+# Verificar conteúdo (deve ter tls.crt e tls.key)
+kubectl describe secret <NOME_SECRET_TLS> -n <NAMESPACE>
 ```
 
----
-
-### Problema: Certificado SSL não funciona
-
-**Verificar se o Secret TLS existe:**
-```bash
-kubectl get secret tls-tatulab -n observability
-```
-
-**Verificar conteúdo do Secret:**
-```bash
-kubectl describe secret tls-tatulab -n observability
-```
-
-**Deve conter:**
-- `tls.crt`
-- `tls.key`
-
----
-
-### Problema: 404 Not Found
-
-**Verificar se o match está correto:**
-```bash
-kubectl get ingressroute grafana-ingressroute -n observability -o yaml
-```
-
-**Verificar se o hostname bate:**
-```bash
-curl -H "Host: grafana.tatulab.com.br" -k https://192.168.1.72
-```
-
----
-
-## Estrutura de Arquivos
-```
-~/manifestos/obs/
-├── kube-prometheus-stack-values.yaml
-├── traefik-values.yaml
-├── grafana-ingressroute.yaml
-├── prometheus-operator-installation.md
-└── traefik-observability-installation.md
-```
-
----
-
-## Componentes Instalados
-
-| Componente | Descrição |
-|------------|-----------|
-| **Traefik** | Reverse proxy e load balancer |
-| **IngressClass** | traefik-observability |
-| **Service LoadBalancer** | IP fixo 192.168.1.72 |
-| **IngressRoute** | Rota para grafana.tatulab.com.br |
-
----
-
-## Fluxo de Tráfego
-```
-Cliente (navegador)
-    ↓
-DNS: grafana.tatulab.com.br → 192.168.1.72
-    ↓
-Traefik Service (LoadBalancer)
-    ↓
-Traefik Pod (observability namespace)
-    ↓
-IngressRoute: Host(`grafana.tatulab.com.br`)
-    ↓
-Service: kube-prometheus-stack-grafana:80
-    ↓
-Grafana Pod
-```
-
----
-
-## Segurança
-
-### TLS/SSL
-- **Certificado:** Secret `tls-tatulab` no namespace observability
-- **Protocolo:** HTTPS (porta 443)
-- **HTTP:** Porta 80 exposta (pode configurar redirect se necessário)
-
-### Considerações
-1. **Certificado válido:** Usar Let's Encrypt ou certificado interno
-2. **Autenticação:** Grafana tem autenticação própria (admin/senha)
-3. **Firewall:** Restringir acesso ao IP 192.168.1.72 se necessário
-
----
-
-## Monitoramento do Traefik
-
-### Métricas do Traefik
-O Traefik expõe métricas Prometheus na porta 9100 (por padrão).
-
-**ServiceMonitor para Prometheus (opcional):**
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: traefik-metrics
-  namespace: observability
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: traefik
-  endpoints:
-  - port: metrics
-    interval: 30s
-```
+> O Secret TLS deve estar **no mesmo namespace** do `IngressRoute` que o referencia.
 
 ---
 
 ## Referências
 
-- [Traefik Documentation](https://doc.traefik.io/traefik/)
+- [Traefik — Kubernetes CRD Provider](https://doc.traefik.io/traefik/providers/kubernetes-crd/)
+- [Traefik — IngressClass](https://doc.traefik.io/traefik/providers/kubernetes-ingress/#ingressclass)
 - [Traefik Helm Chart](https://github.com/traefik/traefik-helm-chart)
-- [Traefik IngressRoute](https://doc.traefik.io/traefik/routing/providers/kubernetes-crd/)
-- [Traefik Kubernetes CRD](https://doc.traefik.io/traefik/providers/kubernetes-crd/)
-
----
-
-## Notas Importantes
-
-1. **IngressClass separada:** Evita conflito com Traefik do ArgoCD
-2. **Namespace isolado:** `allowCrossNamespace: false` mantém segurança
-3. **IP fixo:** Facilita configuração de DNS
-4. **TLS obrigatório:** Apenas entryPoint `websecure` configurado
-5. **Dashboard desabilitado:** Reduz superfície de ataque
-
----
-
-**Documentação criada em:** 28/01/2026  
-**Última atualização:** 28/01/2026
+- [Tutorial base: Traefik Ingress Controller](./traefik-ingress-controller.md)
