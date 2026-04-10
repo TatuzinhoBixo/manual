@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-spring-boot
+  labels:
+    app: demo-spring-boot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: demo-spring-boot
+  template:
+    metadata:
+      labels:
+        app: demo-spring-boot
+    spec:
+      containers:
+        - name: demo-spring-boot
+          image: demo-spring-boot:1.0.0
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

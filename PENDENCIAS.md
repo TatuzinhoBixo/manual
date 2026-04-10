@@ -1,0 +1,1 @@
+docker do registry-ui

@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="DevOps Toolkit - Ferramentas essenciais para Kubernetes e DevOps">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>DevOps Toolkit</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Favicon inline SVG -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>">
+    <!-- SkyWalking Client JS - Browser Monitoring -->
+    <script src="https://cdn.jsdelivr.net/npm/skywalking-client-js@1.0.0/lib/index.min.js"></script>
+    <script>
+        var swConfig = {
+            collector: 'https://skywalking-oap.tatulab.com.br',
+            service: 'devops-toolkit-frontend',
+            serviceVersion: '1.0.0',
+            pagePath: location.pathname,
+            jsErrors: true,
+            apiErrors: true,
+            resourceErrors: true,
+            autoTracePerf: true,
+            useWebVitals: true,
+            enableSPA: true
+        };
+        ClientMonitor.register(swConfig);
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                ClientMonitor.setPerformance(swConfig);
+            }, 3000);
+        });
+    </script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <span class="logo-icon">⚙️</span>
+                <h1>DevOps Toolkit</h1>
+            </div>
+            <nav class="nav-actions">
+                <button id="theme-toggle" class="btn-icon" title="Alternar tema">
+                    <span class="icon-sun">☀️</span>
+                    <span class="icon-moon">🌙</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Navigation Tabs -->
+    <nav class="main-nav">
+        <div class="nav-tabs">
+            <button class="nav-tab active" data-tab="calculator">
+                <span class="tab-icon">🧮</span>
+                <span class="tab-text">Calculadora K8s</span>
+            </button>
+            <button class="nav-tab" data-tab="generator">
+                <span class="tab-icon">📝</span>
+                <span class="tab-text">Gerador YAML</span>
+            </button>
+            <button class="nav-tab" data-tab="converter">
+                <span class="tab-icon">🔄</span>
+                <span class="tab-text">YAML ↔ JSON</span>
+            </button>
+            <button class="nav-tab" data-tab="base64">
+                <span class="tab-icon">🔐</span>
+                <span class="tab-text">Base64</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+        <!-- Tab 1: Kubernetes Resource Calculator -->
+        <section id="calculator" class="tab-content active">
+            <div class="section-header">
+                <h2>Calculadora de Recursos Kubernetes</h2>
+                <p>Calcule requests/limits e converta unidades de CPU e memória</p>
+            </div>
+
+            <div class="calculator-grid">
+                <!-- Unit Converter Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>🔢 Conversor de Unidades</h3>
+                    </div>
+                    <div class="card-body">
+                        <!-- Memory Converter -->
+                        <div class="converter-section">
+                            <h4>Memória</h4>
+                            <div class="input-group">
+                                <input type="number" id="memory-value" placeholder="256" min="0" step="any">
+                                <select id="memory-unit-from">
+                                    <option value="bytes">Bytes</option>
+                                    <option value="Ki">Ki (Kibibytes)</option>
+                                    <option value="Mi" selected>Mi (Mebibytes)</option>
+                                    <option value="Gi">Gi (Gibibytes)</option>
+                                    <option value="Ti">Ti (Tebibytes)</option>
+                                    <option value="KB">KB (Kilobytes)</option>
+                                    <option value="MB">MB (Megabytes)</option>
+                                    <option value="GB">GB (Gigabytes)</option>
+                                </select>
+                            </div>
+                            <div class="conversion-results" id="memory-results">
+                                <p class="placeholder-text">Digite um valor para converter</p>
+                            </div>
+                        </div>
+
+                        <!-- CPU Converter -->
+                        <div class="converter-section">
+                            <h4>CPU</h4>
+                            <div class="input-group">
+                                <input type="number" id="cpu-value" placeholder="500" min="0" step="any">
+                                <select id="cpu-unit-from">
+                                    <option value="m" selected>millicores (m)</option>
+                                    <option value="cores">cores</option>
+                                </select>
+                            </div>
+                            <div class="conversion-results" id="cpu-results">
+                                <p class="placeholder-text">Digite um valor para converter</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Resource Calculator Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>📊 Calculadora de Recursos</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="app-name">Nome da Aplicação</label>
+                                <input type="text" id="app-name" placeholder="my-app">
+                            </div>
+                            <div class="form-group">
+                                <label for="replicas">Réplicas</label>
+                                <input type="number" id="replicas" value="3" min="1" max="100">
+                            </div>
+                            <div class="form-group">
+                                <label for="cpu-request">CPU Request (m)</label>
+                                <input type="number" id="cpu-request" placeholder="100" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="cpu-limit">CPU Limit (m)</label>
+                                <input type="number" id="cpu-limit" placeholder="500" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="memory-request">Memory Request (Mi)</label>
+                                <input type="number" id="memory-request" placeholder="128" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="memory-limit">Memory Limit (Mi)</label>
+                                <input type="number" id="memory-limit" placeholder="512" min="0">
+                            </div>
+                        </div>
+                        <button id="calc-resources" class="btn btn-primary">Calcular Total</button>
+
+                        <div class="results-panel" id="resource-results">
+                            <!-- Results will be inserted here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cost Estimator Card -->
+                <div class="card card-wide">
+                    <div class="card-header">
+                        <h3>💰 Estimador de Custos (Referência)</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="cost-info">
+                            <p class="info-text">Valores baseados em preços médios de cloud (AWS/GCP/Azure). Use como referência apenas.</p>
+                        </div>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="cost-cpu-hour">Custo CPU/core/hora ($)</label>
+                                <input type="number" id="cost-cpu-hour" value="0.05" step="0.001" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="cost-mem-hour">Custo RAM/GB/hora ($)</label>
+                                <input type="number" id="cost-mem-hour" value="0.01" step="0.001" min="0">
+                            </div>
+                        </div>
+                        <div class="cost-results" id="cost-results">
+                            <p class="placeholder-text">Calcule os recursos acima para ver a estimativa</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab 2: YAML Generator -->
+        <section id="generator" class="tab-content">
+            <div class="section-header">
+                <h2>Gerador de Manifestos Kubernetes</h2>
+                <p>Crie templates YAML para Deployment, Service, Ingress e mais</p>
+            </div>
+
+            <div class="generator-layout">
+                <!-- Form Panel -->
+                <div class="generator-form">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>⚙️ Configurações</h3>
+                        </div>
+                        <div class="card-body">
+                            <!-- Manifest Type Selector -->
+                            <div class="manifest-types">
+                                <label class="checkbox-card">
+                                    <input type="checkbox" id="gen-deployment" checked>
+                                    <span class="checkbox-label">📦 Deployment</span>
+                                </label>
+                                <label class="checkbox-card">
+                                    <input type="checkbox" id="gen-service" checked>
+                                    <span class="checkbox-label">🔌 Service</span>
+                                </label>
+                                <label class="checkbox-card">
+                                    <input type="checkbox" id="gen-ingress">
+                                    <span class="checkbox-label">🌐 Ingress</span>
+                                </label>
+                                <label class="checkbox-card">
+                                    <input type="checkbox" id="gen-configmap">
+                                    <span class="checkbox-label">📋 ConfigMap</span>
+                                </label>
+                                <label class="checkbox-card">
+                                    <input type="checkbox" id="gen-secret">
+                                    <span class="checkbox-label">🔐 Secret</span>
+                                </label>
+                                <label class="checkbox-card">
+                                    <input type="checkbox" id="gen-hpa">
+                                    <span class="checkbox-label">📈 HPA</span>
+                                </label>
+                            </div>
+
+                            <!-- Basic Info -->
+                            <fieldset class="form-fieldset">
+                                <legend>Informações Básicas</legend>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="gen-app-name">Nome da Aplicação *</label>
+                                        <input type="text" id="gen-app-name" placeholder="my-app" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-namespace">Namespace</label>
+                                        <input type="text" id="gen-namespace" placeholder="default">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-image">Imagem Docker *</label>
+                                        <input type="text" id="gen-image" placeholder="nginx:1.21-alpine" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-replicas">Réplicas</label>
+                                        <input type="number" id="gen-replicas" value="2" min="1">
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <!-- Container Settings -->
+                            <fieldset class="form-fieldset">
+                                <legend>Container</legend>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="gen-port">Porta do Container</label>
+                                        <input type="number" id="gen-port" value="80" min="1" max="65535">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-protocol">Protocolo</label>
+                                        <select id="gen-protocol">
+                                            <option value="TCP">TCP</option>
+                                            <option value="UDP">UDP</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-cpu-req">CPU Request</label>
+                                        <input type="text" id="gen-cpu-req" placeholder="100m">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-cpu-lim">CPU Limit</label>
+                                        <input type="text" id="gen-cpu-lim" placeholder="500m">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-mem-req">Memory Request</label>
+                                        <input type="text" id="gen-mem-req" placeholder="128Mi">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-mem-lim">Memory Limit</label>
+                                        <input type="text" id="gen-mem-lim" placeholder="256Mi">
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <!-- Service Settings -->
+                            <fieldset class="form-fieldset" id="service-settings">
+                                <legend>Service</legend>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="gen-service-type">Tipo de Service</label>
+                                        <select id="gen-service-type">
+                                            <option value="ClusterIP">ClusterIP</option>
+                                            <option value="NodePort">NodePort</option>
+                                            <option value="LoadBalancer">LoadBalancer</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-service-port">Service Port</label>
+                                        <input type="number" id="gen-service-port" value="80" min="1" max="65535">
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <!-- Ingress Settings -->
+                            <fieldset class="form-fieldset hidden" id="ingress-settings">
+                                <legend>Ingress</legend>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="gen-ingress-host">Host</label>
+                                        <input type="text" id="gen-ingress-host" placeholder="app.example.com">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-ingress-path">Path</label>
+                                        <input type="text" id="gen-ingress-path" value="/">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-ingress-class">Ingress Class</label>
+                                        <input type="text" id="gen-ingress-class" placeholder="nginx">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-inline">
+                                            <input type="checkbox" id="gen-ingress-tls">
+                                            <span>Habilitar TLS</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <!-- HPA Settings -->
+                            <fieldset class="form-fieldset hidden" id="hpa-settings">
+                                <legend>Horizontal Pod Autoscaler</legend>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="gen-hpa-min">Min Réplicas</label>
+                                        <input type="number" id="gen-hpa-min" value="2" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-hpa-max">Max Réplicas</label>
+                                        <input type="number" id="gen-hpa-max" value="10" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-hpa-cpu">Target CPU %</label>
+                                        <input type="number" id="gen-hpa-cpu" value="80" min="1" max="100">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-hpa-mem">Target Memory %</label>
+                                        <input type="number" id="gen-hpa-mem" value="80" min="1" max="100">
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <!-- Environment Variables -->
+                            <fieldset class="form-fieldset">
+                                <legend>Variáveis de Ambiente</legend>
+                                <div id="env-vars-container">
+                                    <!-- Dynamic env vars will be added here -->
+                                </div>
+                                <button type="button" id="add-env-var" class="btn btn-secondary btn-sm">
+                                    + Adicionar Variável
+                                </button>
+                            </fieldset>
+
+                            <!-- Labels -->
+                            <fieldset class="form-fieldset">
+                                <legend>Labels Adicionais</legend>
+                                <div id="labels-container">
+                                    <!-- Dynamic labels will be added here -->
+                                </div>
+                                <button type="button" id="add-label" class="btn btn-secondary btn-sm">
+                                    + Adicionar Label
+                                </button>
+                            </fieldset>
+
+                            <div class="form-actions">
+                                <button id="generate-yaml" class="btn btn-primary btn-lg">
+                                    🚀 Gerar YAML
+                                </button>
+                                <button id="clear-generator" class="btn btn-secondary">
+                                    🗑️ Limpar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Output Panel -->
+                <div class="generator-output">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📄 YAML Gerado</h3>
+                            <div class="card-actions">
+                                <button id="copy-yaml" class="btn btn-sm" title="Copiar">📋 Copiar</button>
+                                <button id="download-yaml" class="btn btn-sm" title="Download">⬇️ Download</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <pre id="yaml-output" class="code-output"><code>Preencha o formulário e clique em "Gerar YAML"</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab 3: YAML/JSON Converter -->
+        <section id="converter" class="tab-content">
+            <div class="section-header">
+                <h2>Conversor YAML ↔ JSON</h2>
+                <p>Converta entre formatos YAML e JSON rapidamente</p>
+            </div>
+
+            <div class="converter-layout">
+                <div class="converter-panel">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📥 Entrada</h3>
+                            <select id="input-format" class="format-select">
+                                <option value="yaml">YAML</option>
+                                <option value="json">JSON</option>
+                            </select>
+                        </div>
+                        <div class="card-body">
+                            <textarea id="converter-input" class="code-textarea" placeholder="Cole seu YAML ou JSON aqui..."></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="converter-actions">
+                    <button id="convert-btn" class="btn btn-primary btn-icon-lg">
+                        🔄
+                    </button>
+                    <button id="swap-formats" class="btn btn-secondary" title="Trocar formatos">
+                        ⇄
+                    </button>
+                </div>
+
+                <div class="converter-panel">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📤 Saída</h3>
+                            <div class="card-actions">
+                                <button id="copy-converted" class="btn btn-sm">📋 Copiar</button>
+                                <button id="download-converted" class="btn btn-sm">⬇️ Download</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <pre id="converter-output" class="code-output"><code>O resultado aparecerá aqui...</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab 4: Base64 Encoder/Decoder -->
+        <section id="base64" class="tab-content">
+            <div class="section-header">
+                <h2>Encoder/Decoder Base64</h2>
+                <p>Encode e decode para Kubernetes Secrets e mais</p>
+            </div>
+
+            <div class="base64-layout">
+                <!-- Single Value Mode -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>🔤 Texto Simples</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="base64-single">
+                            <div class="base64-input-group">
+                                <label for="base64-plain">Texto Original</label>
+                                <textarea id="base64-plain" class="code-textarea" placeholder="Digite o texto para encodar..."></textarea>
+                            </div>
+                            <div class="base64-actions-vertical">
+                                <button id="encode-base64" class="btn btn-primary">Encode →</button>
+                                <button id="decode-base64" class="btn btn-secondary">← Decode</button>
+                            </div>
+                            <div class="base64-input-group">
+                                <label for="base64-encoded">Base64</label>
+                                <textarea id="base64-encoded" class="code-textarea" placeholder="Resultado em Base64..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Secret Generator Mode -->
+                <div class="card card-wide">
+                    <div class="card-header">
+                        <h3>🔐 Gerador de Secret Kubernetes</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="secret-name">Nome do Secret</label>
+                                <input type="text" id="secret-name" placeholder="my-secret">
+                            </div>
+                            <div class="form-group">
+                                <label for="secret-namespace">Namespace</label>
+                                <input type="text" id="secret-namespace" placeholder="default">
+                            </div>
+                        </div>
+
+                        <div class="secret-entries" id="secret-entries">
+                            <div class="secret-entry">
+                                <input type="text" placeholder="Key (ex: DB_PASSWORD)" class="secret-key">
+                                <input type="text" placeholder="Value (será encodado)" class="secret-value">
+                                <button class="btn btn-icon btn-danger remove-secret-entry" title="Remover">✕</button>
+                            </div>
+                        </div>
+                        <button id="add-secret-entry" class="btn btn-secondary btn-sm">+ Adicionar Campo</button>
+
+                        <div class="form-actions">
+                            <button id="generate-secret" class="btn btn-primary">🔐 Gerar Secret YAML</button>
+                        </div>
+
+                        <div class="secret-output-wrapper">
+                            <div class="card-header">
+                                <span>YAML do Secret</span>
+                                <div class="card-actions">
+                                    <button id="copy-secret" class="btn btn-sm">📋 Copiar</button>
+                                    <button id="download-secret" class="btn btn-sm">⬇️ Download</button>
+                                </div>
+                            </div>
+                            <pre id="secret-output" class="code-output"><code>Preencha os campos e clique em "Gerar Secret YAML"</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <p>DevOps Toolkit v1.0 | Feito com ☕ para DevOps</p>
+            <div class="footer-links">
+                <button id="export-data" class="btn btn-sm">📦 Exportar Dados</button>
+                <button id="import-data" class="btn btn-sm">📥 Importar Dados</button>
+                <input type="file" id="import-file" accept=".json" hidden>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden">
+        <span id="toast-message"></span>
+    </div>
+
+    <!-- YAML.js library for parsing (minimal, inline) -->
+    <script src="js/yaml-parser.js"></script>
+    <script src="js/app.js"></script>
+
+
+</body>
+</html>
