@@ -120,53 +120,147 @@ cat > /home/devopstatu/.vimrc << 'EOF'
 " ============================================================
 " .vimrc - SysAdmin / DevOps (Celito)
 " ============================================================
+
 set number
+" Ativa a numeração das linhas à esquerda.
+
 set relativenumber
+" Exibe os números das linhas de forma relativa à posição do cursor, facilitando saltos verticais (ex: 5j, 3k).
+
 set cursorline
+" Destaca horizontalmente a linha onde o cursor está posicionado no momento.
+
 set scrolloff=8
+" Mantém sempre 8 linhas visíveis acima e abaixo do cursor enquanto você rola a tela.
+
 set colorcolumn=120
+" Cria uma linha vertical na coluna 120 (útil como limite visual para manter linhas curtas/legíveis).
+
 set signcolumn=yes
+" Mantém a coluna de sinais à esquerda sempre aberta, evitando que o texto "pule" quando alertas (erros, git) aparecem.
+
 set termguicolors
+" Habilita suporte a cores reais (24-bit) no terminal, permitindo temas mais modernos e precisos.
+
 set noswapfile
+" Desativa a criação de arquivos de swap (.swp), evitando aqueles avisos chatos se o vim ou terminal fechar inesperadamente.
+
 set nobackup
+" Desativa a criação de arquivos de backup automáticos (aqueles que terminam com ~).
+
 set undofile
+" Mantém o histórico de ações para "desfazer" salvo em um arquivo, permitindo dar 'undo' mesmo após fechar e reabrir o vim.
+
 set undodir=~/.vim/undodir
+" Define o diretório específico onde os históricos do 'undofile' serão armazenados.
+
 set hidden
+" Permite que você troque para outro arquivo (buffer) sem precisar salvar as alterações do arquivo atual antes.
+
 set confirm
+" Em vez de dar um erro quando você tenta sair com alterações não salvas, o Vim pergunta se deseja salvar.
+
 set autoread
+" Atualiza o arquivo automaticamente dentro do Vim se ele for modificado por outro programa externamente.
+
 set updatetime=300
+" Reduz o tempo de resposta do Vim para 300ms (padrão é 4000ms), deixando plugins (como os de status do Git) mais rápidos.
+
 set hlsearch
+" Destaca (colore) todas as ocorrências encontradas durante uma busca (/busca).
+
 set incsearch
+" Começa a buscar e pular para as ocorrências em tempo real, enquanto você ainda está digitando.
+
 set ignorecase
+" Ignora a diferença entre letras maiúsculas e minúsculas durante uma busca.
+
 set smartcase
+" Sobrescreve o 'ignorecase' e passa a diferenciar maiúsculas de minúsculas se você digitar alguma letra maiúscula na busca.
+
 set tabstop=2
+" Define que o tamanho visual de um caractere de Tabulação (Tab) equivale a 2 espaços.
+
 set shiftwidth=2
+" Define que as indentações automáticas ou feitas por comandos (como >> ou <<) usarão 2 espaços.
+
 set expandtab
+" Converte qualquer "Tab" pressionado no teclado em espaços físicos (crucial para arquivos YAML e Python).
+
 set smartindent
+" Faz a indentação inteligente da próxima linha de acordo com a sintaxe (ex: ao abrir uma chave { ou escrever um condicional).
+
 set autoindent
+" Copia a indentação exata da linha atual quando você aperta Enter para iniciar uma nova linha.
+
 filetype plugin indent on
+" Habilita a detecção automática do tipo de arquivo e carrega plugins e regras de indentação específicas para aquela linguagem.
+
 autocmd FileType yaml setlocal ts=2 sw=2 expandtab
+" Cria uma regra automática: se o arquivo for .yaml, força o tabstop (ts) e shiftwidth (sw) para 2 e converte tabs em espaços.
+
 autocmd FileType yml  setlocal ts=2 sw=2 expandtab
+" A mesma regra automática acima, mas aplicada a arquivos com extensão .yml.
+
 set clipboard=unnamedplus
+" Integra a função de copiar e colar do Vim (yank/put) com a área de transferência do Sistema Operacional.
+
 set laststatus=2
+" Garante que a barra de status na parte inferior da tela do Vim esteja sempre visível.
+
 set showcmd
+" Exibe comandos parciais que estão sendo digitados (ex: ao digitar 'd', ele mostra antes de você apertar 'w' para deletar a palavra).
+
 set wildmenu
+" Ativa um menu visual e interativo de autocompletar na linha de comando (quando você aperta Tab após digitar :comando).
+
 set wildmode=longest:full,full
+" Define o comportamento do wildmenu: primeiro completa até o máximo possível, depois permite navegar pelas opções na lista completa.
+
 set splitbelow
+" Configura para que novas janelas horizontais (:split) sejam abertas abaixo da janela atual, e não acima.
+
 set splitright
+" Configura para que novas janelas verticais (:vsplit) sejam abertas à direita da janela atual, e não à esquerda.
+
 syntax on
+" Habilita o destaque de sintaxe, colorindo o código para facilitar a leitura.
+
 set background=dark
+" Avisa ao Vim que você está usando um fundo escuro, para que ele ajuste as cores padrão para terem o melhor contraste.
+
 let mapleader = " "
+" Define a tecla especial '<leader>' como sendo a Barra de Espaço. Essa tecla é usada como atalho mestre para outros comandos.
+
 nnoremap <leader>/ :nohlsearch<CR>
+" Mapeia [Espaço + /] no modo normal para apagar/limpar o destaque amarelo que fica após fazer uma busca.
+
 nnoremap <C-h> <C-w>h
+" Mapeia [Ctrl + h] para navegar rapidamente para a janela dividida à esquerda (substitui o comando mais longo de Ctrl+w e depois h).
+
 nnoremap <C-j> <C-w>j
+" Mapeia [Ctrl + j] para navegar rapidamente para a janela dividida abaixo.
+
 nnoremap <C-k> <C-w>k
+" Mapeia [Ctrl + k] para navegar rapidamente para a janela dividida acima.
+
 nnoremap <C-l> <C-w>l
+" Mapeia [Ctrl + l] para navegar rapidamente para a janela dividida à direita.
+
 nnoremap <leader>w :w<CR>
+" Mapeia [Espaço + w] para salvar (:w) o arquivo rapidamente.
+
 nnoremap <leader>q :q!<CR>
+" Mapeia [Espaço + q] para forçar a saída do arquivo sem salvar alterações (:q!).
+
 nnoremap <leader>r :source ~/.vimrc<CR>
+" Mapeia [Espaço + r] para recarregar o arquivo .vimrc instantaneamente, aplicando novas configurações sem precisar fechar o Vim.
+
 set encoding=utf-8
+" Define a codificação interna de caracteres e exibição do próprio Vim como UTF-8.
+
 set fileencoding=utf-8
+" Define a codificação padrão de novos arquivos para UTF-8 ao serem salvos.
 EOF
 chown devopstatu:devopstatu /home/devopstatu/.vimrc
 ```
@@ -194,12 +288,10 @@ ClientAliveCountMax 3
 LoginGraceTime 60
 AllowAgentForwarding no
 AllowTcpForwarding no
-Protocol 2
 LogLevel VERBOSE
 MaxSessions 4
 UseDNS no
 AllowUsers devopstatu
-Banner /etc/issue.net
 ```
 
 ### 4.2 Restringir permissao do sshd_config
