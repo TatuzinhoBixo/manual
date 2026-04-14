@@ -16,6 +16,93 @@ O GitLab Runner é o agente responsável por executar os jobs definidos nos pipe
 
 ---
 
+## Instalação do GitLab Runner
+
+> Recomenda-se instalar o Runner em um servidor **separado** do GitLab, para evitar concorrência de recursos durante a execução dos pipelines.
+
+### Etapa 1: Atualizar o sistema
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+
+### Etapa 2: Instalar dependências
+
+```bash
+sudo apt install -y curl ca-certificates gnupg
+```
+
+### Etapa 3: Instalar o Docker
+
+O executor `docker` é o mais utilizado, portanto o Docker deve estar instalado no host do Runner:
+
+```bash
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+```
+
+Verifique a instalação:
+
+```bash
+sudo docker --version
+sudo systemctl status docker
+```
+
+### Etapa 4: Adicionar o repositório oficial do GitLab Runner
+
+```bash
+curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | sudo bash
+```
+
+### Etapa 5: Instalar o pacote do GitLab Runner
+
+```bash
+sudo apt install -y gitlab-runner
+```
+
+Alternativamente, instalação via pacote `.deb` direto:
+
+```bash
+wget https://s3.amazonaws.com/gitlab-runner-downloads/latest/deb/gitlab-runner_amd64.deb
+sudo dpkg -i gitlab-runner_amd64.deb
+```
+
+### Etapa 6: Permitir que o Runner utilize o Docker
+
+```bash
+sudo usermod -aG docker gitlab-runner
+```
+
+### Etapa 7: Iniciar e habilitar o serviço
+
+```bash
+sudo systemctl enable gitlab-runner
+sudo systemctl start gitlab-runner
+sudo gitlab-runner status
+```
+
+### Etapa 8: Registrar o Runner no GitLab
+
+```bash
+sudo gitlab-runner register
+```
+
+**Respostas para o registro:**
+
+| Pergunta | Resposta |
+|:---------|:---------|
+| GitLab instance URL | `<GITLAB_URL>` |
+| Registration token | `<REGISTRATION_TOKEN>` |
+| Description | `<RUNNER_NAME>` |
+| Tags | `docker,linux` |
+| Executor | `docker` |
+| Default Docker image | `alpine:latest` |
+
+Após o registro, o Runner aparecerá em **Settings > CI/CD > Runners** na instância do GitLab.
+
+---
+
 ## Arquivo de Configuração
 
 O arquivo de configuração do Runner está localizado em:
