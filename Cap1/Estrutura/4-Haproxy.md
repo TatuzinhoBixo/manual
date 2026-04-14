@@ -12,20 +12,21 @@ HAProxy é o balanceador de carga utilizado para distribuir tráfego entre os co
 
 ## Variáveis de Configuração
 
-| Variável | Descrição | Exemplo |
-|:---------|:----------|:--------|
-| `<IP_CONTROLPLANE_1>` | IP do primeiro control plane | 192.168.1.42 |
-| `<IP_CONTROLPLANE_2>` | IP do segundo control plane | 192.168.1.43 |
-| `<IP_CONTROLPLANE_3>` | IP do terceiro control plane | 192.168.1.44 |
-| `<REDE_PERMITIDA>` | Range de IPs permitidos no stats | 192.168.1.0/24 |
-| `<USUARIO_STATS>` | Usuário para acessar estatísticas | admin |
-| `<SENHA_STATS>` | Senha do usuário stats | (usar senha forte) |
+| Variável              | Descrição                         | Exemplo            |
+| :-------------------- | :-------------------------------- | :----------------- |
+| `<IP_CONTROLPLANE_1>` | IP do primeiro control plane      | 192.168.1.42       |
+| `<IP_CONTROLPLANE_2>` | IP do segundo control plane       | 192.168.1.43       |
+| `<IP_CONTROLPLANE_3>` | IP do terceiro control plane      | 192.168.1.44       |
+| `<REDE_PERMITIDA>`    | Range de IPs permitidos no stats  | 192.168.1.0/24     |
+| `<USUARIO_STATS>`     | Usuário para acessar estatísticas | admin              |
+| `<SENHA_STATS>`       | Senha do usuário stats            | (usar senha forte) |
 
 ---
 
 ## Etapa 1: Instalação
 
 ```bash
+sudo apt update
 sudo apt install haproxy -y
 ```
 

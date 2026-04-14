@@ -6,11 +6,11 @@ Este documento detalha a instalação e configuração do BIND9 como servidor DN
 
 ## Variáveis de Configuração
 
-| Variável | Descrição | Exemplo |
-|:---------|:----------|:--------|
-| `<DOMINIO>` | Domínio interno | exemplo.com.br |
-| `<IP_DNS>` | IP do servidor DNS | 192.168.1.40 |
-| `<IP_WILDCARD>` | IP para registros wildcard (Ingress) | 192.168.1.41 |
+| Variável        | Descrição                            | Exemplo              |
+| :-------------- | :----------------------------------- | :------------------- |
+| `<DOMINIO>`     | Domínio interno                      | exemplo.com.br       |
+| `<IP_DNS>`      | IP do servidor DNS                   | 192.168.1.40         |
+| `<IP_WILDCARD>` | IP para registros wildcard (Ingress) | 192.168.1.41         |
 | `<EMAIL_ADMIN>` | Email do administrador (formato DNS) | admin.exemplo.com.br |
 
 ---
@@ -30,7 +30,6 @@ sudo apt install -y bind9 bind9utils bind9-doc dnsutils
 
 Edite `/etc/bind/named.conf.local`:
 
-```bash
 sudo vim /etc/bind/named.conf.local
 ```
 
@@ -62,7 +61,7 @@ Conteúdo:
 ; Zona DNS para <DOMINIO>
 ;
 $TTL 604800
-@   IN  SOA ns1.<DOMINIO>. <EMAIL_ADMIN>. (
+@   IN  SOA ns1.<DOMINIO>. <EMAIL.DOMINIO>. (
             2024010101  ; Serial (AAAAMMDDNN)
             604800      ; Refresh (7 dias)
             86400       ; Retry (1 dia)
