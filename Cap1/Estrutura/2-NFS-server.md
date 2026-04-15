@@ -21,7 +21,7 @@ sudo vim /etc/exports
 Adicionar a linha:
 
 ```
-<diretorio-compartilhado>    <rede-permitida>/<mascara>(rw,sync,no_subtree_check)
+<diretorio-compartilhado>    <rede-permitida>/<mascara>(rw,sync,no_subtree_check)<diretorio-compartilhado>    <rede-permitida>/<mascara>(rw,sync,no_subtree_check,no_root_squash)
 ```
 
 Exemplo:
@@ -29,6 +29,30 @@ Exemplo:
 ```
 /media/nfs    192.168.1.0/24(rw,sync,no_subtree_check)
 ```
+
+## Sintaxe
+
+```
+/compartilhamento    rede/mask(rw,sync,no_subtree_check)
+/compartilhamento    rede/mask(rw,sync,no_subtree_check,no_root_squash)
+```
+
+## Diferença
+
+| Opção                  | Comportamento                                                                                      |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| `root_squash` (padrão) | Root do cliente é mapeado para `nobody` no servidor — perde privilégios de root sobre os arquivos. |
+| `no_root_squash`       | Root do cliente é tratado como root no servidor — controle total sobre os arquivos.                |
+
+## Quando usar
+
+- **`root_squash` (primeira linha):** regra geral para compartilhamentos de dados, aplicações e home directories. Limita o impacto caso um cliente seja comprometido.
+
+- **`no_root_squash` (segunda linha):** apenas quando há necessidade técnica concreta, como:
+  - PersistentVolumes no Kubernetes (provisioner/kubelet precisa ajustar ownership)
+  - Backups que precisam preservar ownership original
+  - Boot/provisioning de máquinas via NFS
+
 
 #### 3. Reiniciar o serviço
 

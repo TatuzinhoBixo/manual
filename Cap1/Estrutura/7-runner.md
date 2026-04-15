@@ -10,9 +10,11 @@ O GitLab Runner é o agente responsável por executar os jobs definidos nos pipe
 
 | Variável | Descrição | Exemplo |
 |:---------|:----------|:--------|
-| `<GITLAB_URL>` | URL da instância GitLab | `https://gitlab.exemplo.com.br` |
-| `<REGISTRATION_TOKEN>` | Token de registro do Runner | Obtido em Settings > CI/CD > Runners |
-| `<RUNNER_NAME>` | Nome descritivo do Runner | `docker-runner-prod` |
+| `<GITLAB_URL>` | URL da instância GitLab | `https://gitlab.tatulab.com.br` |
+| `<GITLAB_HOST>` | Hostname do GitLab (sem protocolo) | `gitlab.tatulab.com.br` |
+| `<IP_DO_GITLAB>` | IP do servidor GitLab (para `/etc/hosts`) | `192.168.1.10` |
+| `<AUTH_TOKEN>` | Token de autenticação gerado ao criar o runner na UI | `glrt-xxxxxxxxxxxxxxxx` |
+| `<RUNNER_NAME>` | Nome descritivo do Runner | `dumeio` |
 
 ---
 
@@ -49,6 +51,15 @@ sudo docker --version
 sudo systemctl status docker
 ```
 
+A saída esperada é similar a:
+
+```
+Docker version 29.4.0, build 9d7ad9f
+● docker.service - Docker Application Container Engine
+     Loaded: loaded (/usr/lib/systemd/system/docker.service; enabled; preset: enabled)
+     Active: active (running)
+```
+
 ### Etapa 4: Adicionar o repositório oficial do GitLab Runner
 
 ```bash
@@ -61,14 +72,11 @@ curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/s
 sudo apt install -y gitlab-runner
 ```
 
-Alternativamente, instalação via pacote `.deb` direto:
-
-```bash
-wget https://s3.amazonaws.com/gitlab-runner-downloads/latest/deb/gitlab-runner_amd64.deb
-sudo dpkg -i gitlab-runner_amd64.deb
-```
+> O pacote `gitlab-runner-helper-images` é instalado automaticamente como dependência (~560 MB).
 
 ### Etapa 6: Permitir que o Runner utilize o Docker
+
+O serviço `gitlab-runner` roda como o usuário `gitlab-runner`. Para que ele consiga criar containers, adicione esse usuário ao grupo `docker`:
 
 ```bash
 sudo usermod -aG docker gitlab-runner
@@ -82,24 +90,81 @@ sudo systemctl start gitlab-runner
 sudo gitlab-runner status
 ```
 
-### Etapa 8: Registrar o Runner no GitLab
+Saída esperada:
 
-```bash
-sudo gitlab-runner register
+```
+gitlab-runner: Service is running
 ```
 
-**Respostas para o registro:**
+### Etapa 8: Garantir resolução DNS do GitLab
+
+Antes de registrar, confirme que o servidor do Runner resolve o domínio do GitLab:
+
+```bash
+ping <GITLAB_HOST>
+curl -I <GITLAB_URL>
+```
+
+Se o `ping` retornar `Name or service not known`, o DNS não está resolvendo. Soluções:
+
+- **Ambiente com DNS interno** — garanta que `/etc/resolv.conf` aponta para o servidor DNS interno (ver `3-dns.md`).
+- **Ambiente de lab** — adicione a entrada manualmente em `/etc/hosts`:
+
+```bash
+sudo nano /etc/hosts
+```
+
+```
+<IP_DO_GITLAB>   <GITLAB_HOST>
+```
+
+### Etapa 9: Criar o Runner no GitLab (fluxo novo)
+
+A partir do GitLab Runner 15.6, o fluxo recomendado é **criar o runner primeiro na interface web** e só depois vincular a máquina usando o token gerado.
+
+1. Acesse o GitLab como administrador.
+2. Vá em **Admin Area > CI/CD > Runners > New instance runner**.
+   - Para runner de grupo: **Group > Build > Runners > New group runner**.
+   - Para runner de projeto: **Project > Settings > CI/CD > Runners > New project runner**.
+3. Preencha os campos:
+   - **Tags**: `docker`
+   - **Run untagged jobs**: marque se o runner deve pegar jobs sem tag.
+   - **Description**: `<RUNNER_NAME>` (ex.: `dumeio`).
+4. Clique em **Create runner**.
+5. O GitLab exibirá o **authentication token** (formato `glrt-xxxxxxxxxxxx`). Copie — ele só é mostrado uma vez.
+
+### Etapa 10: Registrar o Runner na máquina
+
+Com o token em mãos, rode o registro passando os parâmetros direto na linha de comando:
+
+```bash
+sudo gitlab-runner register \
+  --url <GITLAB_URL> \
+  --registration-token <AUTH_TOKEN>
+```
+
+O comando ainda fará algumas perguntas interativas. Responda:
 
 | Pergunta | Resposta |
 |:---------|:---------|
-| GitLab instance URL | `<GITLAB_URL>` |
-| Registration token | `<REGISTRATION_TOKEN>` |
-| Description | `<RUNNER_NAME>` |
-| Tags | `docker,linux` |
+| GitLab instance URL | `<GITLAB_URL>` (já preenchido) |
+| Registration token | `<AUTH_TOKEN>` (já preenchido) |
+| Description | `<RUNNER_NAME>` (ex.: `dumeio`) |
+| Tags | `docker` |
+| Maintenance note | (deixe em branco) |
 | Executor | `docker` |
 | Default Docker image | `alpine:latest` |
 
-Após o registro, o Runner aparecerá em **Settings > CI/CD > Runners** na instância do GitLab.
+> **Aviso de deprecation**: o GitLab Runner exibirá um warning sobre `registration tokens` estarem deprecados. Isso é esperado — o fluxo novo (authentication token criado na UI) é exatamente o que estamos usando, apesar do flag ainda se chamar `--registration-token`.
+
+Saída esperada ao final:
+
+```
+Runner registered successfully.
+Configuration (with the authentication token) was saved in "/etc/gitlab-runner/config.toml"
+```
+
+Após o registro, o Runner aparecerá **online (bolinha verde)** na mesma tela onde ele foi criado no GitLab.
 
 ---
 
