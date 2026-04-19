@@ -13,13 +13,13 @@ Este documento detalha o processo de instalação de um cluster Kubernetes RKE2 
 
 ## Variáveis de Configuração
 
-| Variável | Descrição | Exemplo |
-|:---------|:----------|:--------|
-| `<IP_HAPROXY>` | IP do balanceador de carga | 192.168.1.41 |
-| `<IP_CONTROLPLANE>` | IP real do control plane | 192.168.1.42 |
-| `<DNS_CLUSTER>` | FQDN do cluster | kube.exemplo.com.br |
-| `<VERSAO_RKE2>` | Versão do RKE2 | v1.31.4+rke2r1 |
-| `<TOKEN>` | Token de join do cluster | (gerado automaticamente) |
+| Variável            | Descrição                  | Exemplo                  |
+| :------------------ | :------------------------- | :----------------------- |
+| `<IP_HAPROXY>`      | IP do balanceador de carga | 192.168.1.41             |
+| `<IP_CONTROLPLANE>` | IP real do control plane   | 192.168.1.42             |
+| `<DNS_CLUSTER>`     | FQDN do cluster            | kube.exemplo.com.br      |
+| `<VERSAO_RKE2>`     | Versão do RKE2             | v1.31.4+rke2r1           |
+| `<TOKEN>`           | Token de join do cluster   | (gerado automaticamente) |
 
 ---
 
@@ -67,17 +67,16 @@ disable:
 tls-san:
   - <IP_HAPROXY>
   - <DNS_CLUSTER>
-node-external-ip: <IP_CONTROLPLANE>
 ```
 
-| Parâmetro | Descrição |
-|:----------|:----------|
+| Parâmetro               | Descrição                                              |
+| :---------------------- | :----------------------------------------------------- |
 | `write-kubeconfig-mode` | Permissões do arquivo kubeconfig (0600 = apenas owner) |
-| `cluster-init` | Indica que este é o primeiro nó do cluster |
-| `cni` | Plugin de rede do cluster (Calico) |
-| `disable` | Componentes desabilitados (usaremos Ingress externo) |
-| `tls-san` | IPs/DNS que serão incluídos no certificado TLS |
-| `node-external-ip` | IP externo do nó para comunicação |
+| `cluster-init`          | Indica que este é o primeiro nó do cluster             |
+| `cni`                   | Plugin de rede do cluster (Calico)                     |
+| `disable`               | Componentes desabilitados (usaremos Ingress externo)   |
+| `tls-san`               | IPs/DNS que serão incluídos no certificado TLS         |
+| `node-external-ip`      | IP externo do nó para comunicação                      |
 
 > **Importante**: O HAProxy e DNS devem estar configurados antes desta etapa. Se usar apenas um control plane, o IP/DNS do cluster pode ser o mesmo da VM.
 
@@ -123,6 +122,19 @@ kubectl edit configmap rke2-coredns-rke2-coredns -n kube-system
 ```
 
 > **Após subir o primeiro control plane**: Remova ou comente a linha `cluster-init: true` do arquivo config.yaml antes de adicionar outros nós.
+
+```bash
+write-kubeconfig-mode: "0600"
+server: https://<IP_HAPROXY>:9345
+token: <TOKEN>
+cni: calico
+disable:
+  - rke2-ingress-nginx
+  - rke2-canal
+tls-san:
+  - <IP_HAPROXY>
+  - <DNS>
+```
 
 ---
 
@@ -238,10 +250,8 @@ touch /etc/rancher/rke2/config.yaml
 Edite o arquivo `/etc/rancher/rke2/config.yaml`:
 
 ```yaml
-server: https://<IP_HAPROXY>:9345
-token: <TOKEN>
-write-kubeconfig-mode: "0600"
-cni: calico
+server: https://<HAPROXY_IP>:9345
+token: <mesmo token do control1>
 ```
 
 ### 5.3 Verificar versão do cluster
@@ -291,12 +301,12 @@ forward . <IP_DNS_INTERNO>
 
 ## Troubleshooting
 
-| Problema | Solução |
-|:---------|:--------|
+| Problema                  | Solução                                              |
+| :------------------------ | :--------------------------------------------------- |
 | Nó não aparece no cluster | Verificar se o HAProxy está configurado corretamente |
-| Erro de certificado | Verificar se `tls-san` inclui IP e DNS corretos |
-| Serviço não inicia | Verificar logs com `journalctl -xeu rke2-server` |
-| Pods em Pending | Verificar se há workers disponíveis e sem taints |
+| Erro de certificado       | Verificar se `tls-san` inclui IP e DNS corretos      |
+| Serviço não inicia        | Verificar logs com `journalctl -xeu rke2-server`     |
+| Pods em Pending           | Verificar se há workers disponíveis e sem taints     |
 
 ## Referências
 
