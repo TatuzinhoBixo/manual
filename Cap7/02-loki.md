@@ -10,7 +10,7 @@ O Loki é o sistema de agregação e consulta de logs da stack de observabilidad
 
 O armazenamento de chunks e índices é feito no **MinIO**, que atua como object storage compatível com S3 dentro do cluster. O **Promtail** é implantado como DaemonSet para coletar logs de todos os pods do cluster.
 
-O Grafana consome logs via datasource apontando para `loki-read` (ver tutorial: `grafana.md`).
+O Grafana consome logs via datasource apontando para `loki-read` (ver tutorial: `01-kube-prometheus-stack.md`).
 
 ### Fluxo de dados
 
@@ -60,7 +60,7 @@ Pods do cluster
 - Istio instalado e operacional no cluster
 - Secret TLS `<TLS_SECRET_NAME>` criado no namespace `istio-system` (não será detalhado neste tutorial)
 - DNS apontando `loki.<DOMAIN>` para o IP do Istio IngressGateway
-- Grafana implantado no mesmo namespace (ver tutorial: `grafana.md`)
+- Grafana implantado no mesmo namespace (ver tutorial: `01-kube-prometheus-stack.md`)
 
 ---
 

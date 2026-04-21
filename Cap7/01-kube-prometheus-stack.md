@@ -81,6 +81,9 @@ O `kube-prometheus-stack` é um Helm Chart que instala uma stack completa de obs
 | `<STORAGE_GRAFANA>`           | Tamanho do PVC do Grafana              | 10Gi           |
 | `<NUM_REPLICAS_PROMETHEUS>`   | Réplicas do Prometheus                 | 2              |
 | `<NUM_REPLICAS_ALERTMANAGER>` | Réplicas do Alertmanager               | 2              |
+| `<DOMAIN>`                    | Domínio base das UIs                   | tatulab.com.br |
+| `<TLS_SECRET_NAME>`           | Secret TLS no namespace da stack       | tls-tatulab    |
+| `<INGRESSGATEWAY_NAME>`       | Nome do ingressgateway do namespace    | monitoring-ingressgateway |
 
 ---
 
@@ -113,9 +116,9 @@ fullnameOverride: prometheus
 # ============================================================
 prometheus:
   prometheusSpec:
-    replicas: <NUM_REPLICAS_PROMETHEUS>
-    retention: <RETENTION_TIME>
-    retentionSize: "<RETENTION_SIZE>"
+    replicas: <NUM_REPLICAS_PROMETHEUS>        # ex: 1
+    retention: <RETENTION_TIME>                # ex: 90d
+    retentionSize: "<RETENTION_SIZE>"          # ex: "140GB"
 
     resources:
       requests:
@@ -128,11 +131,11 @@ prometheus:
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: <STORAGE_CLASS>
+          storageClassName: <STORAGE_CLASS>    # ex: sc-nfs
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
-              storage: <STORAGE_PROMETHEUS>
+              storage: <STORAGE_PROMETHEUS>    # ex: 150Gi
 
     # Distribui réplicas em nodes diferentes (soft constraint)
     affinity:
@@ -159,27 +162,27 @@ prometheus:
 alertmanager:
   enabled: true
   alertmanagerSpec:
-    replicas: <NUM_REPLICAS_ALERTMANAGER>
+    replicas: <NUM_REPLICAS_ALERTMANAGER>      # ex: 1
     storage:
       volumeClaimTemplate:
         spec:
-          storageClassName: <STORAGE_CLASS>
+          storageClassName: <STORAGE_CLASS>    # ex: sc-nfs
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
-              storage: <STORAGE_ALERTMANAGER>
+              storage: <STORAGE_ALERTMANAGER>  # ex: 10Gi
 
 # ============================================================
 # Grafana
 # ============================================================
 grafana:
   enabled: true
-  adminPassword: "<GRAFANA_PASS>"
+  adminPassword: "<GRAFANA_PASS>"              # ex: "SenhaForte123!"
 
   persistence:
     enabled: true
-    storageClassName: <STORAGE_CLASS>
-    size: <STORAGE_GRAFANA>
+    storageClassName: <STORAGE_CLASS>          # ex: sc-nfs
+    size: <STORAGE_GRAFANA>                    # ex: 10Gi
 
   # Desabilitar init container (evita ImagePullBackOff do busybox)
   initChownData:
@@ -204,8 +207,6 @@ prometheusOperator:
 ```
 
 > **Nota — Grafana initChownData:** O init container `busybox` pode causar `ImagePullBackOff` em ambientes com restrição de acesso ao Docker Hub. Desabilitá-lo e usar `fsGroup: 472` resolve o problema — o Kubernetes ajusta as permissões do volume automaticamente via `fsGroup`.
-
-> **Nota — Réplicas do Prometheus:** Com `ReadWriteOnce`, cada réplica recebe seu próprio PV. As réplicas coletam métricas **independentemente** — não há sincronização entre elas. Para HA real com dados unificados, avaliar integração com **Thanos**.
 
 ---
 
@@ -247,6 +248,145 @@ helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
   -f kube-prometheus-stack-values.yaml \
   -n <NAMESPACE>
 ```
+
+---
+
+## Etapa 7: Exposição externa via Istio (perfil minimal)
+
+No perfil `minimal` do Istio não existe um `istio-ingressgateway` compartilhado. O namespace da stack precisa do próprio ingressgateway + `Gateway` + `VirtualService` para expor Grafana, Prometheus e Alertmanager via `https://*.<DOMAIN>`.
+
+### 7.1 Criar o ingressgateway do namespace
+
+Seguir o template completo de `<NOME_APP>-ingressgateway.yaml` descrito em **`Cap1/Kubernets/8-istio.md`** (seção a partir da linha 385), substituindo:
+
+- `<NOME_APP>` → `<INGRESSGATEWAY_NAME>`        # ex: monitoring
+- `<NAMESPACE_APP>` → `<NAMESPACE>`              # ex: monitoring
+
+Aplicar no cluster:
+
+```bash
+kubectl apply -f <INGRESSGATEWAY_NAME>.yaml
+kubectl get pods -n <NAMESPACE> -l app=<INGRESSGATEWAY_NAME>
+kubectl get svc  -n <NAMESPACE> -l app=<INGRESSGATEWAY_NAME>
+```
+
+### 7.2 Criar o Secret TLS no namespace da stack
+
+O secret TLS deve existir no **mesmo namespace** do ingressgateway (não em `istio-system`, pois cada gateway do perfil minimal carrega seu próprio TLS).
+
+```bash
+kubectl create secret tls <TLS_SECRET_NAME> \
+  --cert=/caminho/fullchain.pem \
+  --key=/caminho/privkey.pem \
+  -n <NAMESPACE>
+```
+
+### 7.3 Criar Gateway + VirtualServices
+
+```yaml
+# monitoring-istio.yaml
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: monitoring-gateway
+  namespace: <NAMESPACE>                       # ex: monitoring
+spec:
+  selector:
+    app: <INGRESSGATEWAY_NAME>                 # ex: monitoring-ingressgateway
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: <TLS_SECRET_NAME>      # ex: tls-tatulab
+      hosts:
+        - grafana.<DOMAIN>                     # ex: grafana.tatulab.com.br
+        - prometheus.<DOMAIN>
+        - alertmanager.<DOMAIN>
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: grafana-vs
+  namespace: <NAMESPACE>
+spec:
+  hosts:
+    - grafana.<DOMAIN>
+  gateways:
+    - monitoring-gateway
+  http:
+    - route:
+        - destination:
+            host: kube-prometheus-stack-grafana
+            port:
+              number: 80
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: prometheus-vs
+  namespace: <NAMESPACE>
+spec:
+  hosts:
+    - prometheus.<DOMAIN>
+  gateways:
+    - monitoring-gateway
+  http:
+    - route:
+        - destination:
+            host: prometheus-prometheus
+            port:
+              number: 9090
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: alertmanager-vs
+  namespace: <NAMESPACE>
+spec:
+  hosts:
+    - alertmanager.<DOMAIN>
+  gateways:
+    - monitoring-gateway
+  http:
+    - route:
+        - destination:
+            host: prometheus-alertmanager
+            port:
+              number: 9093
+```
+
+```bash
+kubectl apply -f monitoring-istio.yaml
+```
+
+### 7.4 DNS
+
+Apontar os três hostnames para o IP do Service do ingressgateway do namespace:
+
+```bash
+# Descobrir o IP externo do gateway (MetalLB)
+kubectl get svc -n <NAMESPACE> <INGRESSGATEWAY_NAME>
+```
+
+Criar registros A (ou CNAME) para:
+
+- `grafana.<DOMAIN>`
+- `prometheus.<DOMAIN>`
+- `alertmanager.<DOMAIN>`
+
+### 7.5 Validar
+
+```bash
+curl -I https://grafana.<DOMAIN>         # deve retornar 302 / 200
+curl -I https://prometheus.<DOMAIN>
+curl -I https://alertmanager.<DOMAIN>
+```
+
+> **Nota:** os nomes dos Services acima são os gerados pelo chart `kube-prometheus-stack` quando a release se chama `kube-prometheus-stack` e `fullnameOverride: prometheus` está no values.yaml. **Sempre confirme** com `kubectl get svc -n <NAMESPACE>` antes de aplicar os VirtualServices — os nomes mudam se você usar outra release name ou outro `fullnameOverride`.
 
 ---
 

@@ -4,9 +4,9 @@
 
 O Jaeger é o sistema de rastreamento distribuído (distributed tracing) da stack de observabilidade. Esta implantação usa o **Jaeger v2**, baseado no OpenTelemetry Collector, com backend de armazenamento no **Elasticsearch**.
 
-Os traces chegam ao Jaeger via **OTel Collector** (ver tutorial: `otel-collector.md`), que recebe spans das aplicações e os encaminha para o Jaeger via OTLP gRPC. O Jaeger também aceita traces diretamente via OTLP e Zipkin.
+Os traces chegam ao Jaeger via **OTel Collector** (ver tutorial: `04-otel-collector.md`), que recebe spans das aplicações e os encaminha para o Jaeger via OTLP gRPC. O Jaeger também aceita traces diretamente via OTLP e Zipkin.
 
-O acesso externo à UI é protegido pelo **EnvoyFilter de Basic Auth** (ver tutorial: `kiali.md`, Parte 2).
+O acesso externo à UI é protegido pelo **EnvoyFilter de Basic Auth** (ver tutorial: `05-kiali.md`, Parte 2).
 
 ### Fluxo de traces
 
@@ -14,7 +14,7 @@ O acesso externo à UI é protegido pelo **EnvoyFilter de Basic Auth** (ver tuto
 Aplicações (instrumentadas com OTel SDK)
       │  OTLP gRPC/HTTP
       ▼
-  OTel Collector (ver tutorial: otel-collector.md)
+  OTel Collector (ver tutorial: 04-otel-collector.md)
       │  OTLP gRPC → jaeger:4317
       ▼
   Jaeger v2 (Deployment)
@@ -52,9 +52,9 @@ Aplicações (instrumentadas com OTel SDK)
 - Istio instalado e operacional no cluster
 - Secret TLS `<TLS_SECRET_NAME>` criado no namespace `istio-system`
 - DNS apontando `jaeger.<DOMAIN>` para o IP do Istio IngressGateway
-- Prometheus implantado no mesmo namespace (ver tutorial: `prometheus.md`)
-- OTel Collector implantado no mesmo namespace (ver tutorial: `otel-collector.md`)
-- EnvoyFilter Basic Auth aplicado no IngressGateway (ver tutorial: `kiali.md`, Parte 2)
+- Prometheus implantado no mesmo namespace (ver tutorial: `01-kube-prometheus-stack.md`)
+- OTel Collector implantado no mesmo namespace (ver tutorial: `04-otel-collector.md`)
+- EnvoyFilter Basic Auth aplicado no IngressGateway (ver tutorial: `05-kiali.md`, Parte 2)
 - Nodes do cluster com `vm.max_map_count=262144` — o initContainer do Elasticsearch ajusta isso via `sysctl`, mas requer `privileged: true`
 
 ---
@@ -691,7 +691,7 @@ kubectl port-forward -n <NAMESPACE> svc/prometheus 9090:9090
 # Query: {__name__=~"traces_span_metrics.*"}
 ```
 
-Se não houver dados, verificar se o OTel Collector está enviando métricas (ver tutorial: `otel-collector.md`).
+Se não houver dados, verificar se o OTel Collector está enviando métricas (ver tutorial: `04-otel-collector.md`).
 
 ---
 

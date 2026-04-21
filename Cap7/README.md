@@ -2,7 +2,11 @@
 
 ## Visão Geral
 
-Este guia define a ordem correta de implantação de todos os componentes da stack de observabilidade. A ordem é importante pois existem dependências entre os componentes — implantar fora de sequência pode causar falhas de inicialização.
+Este guia define a ordem correta de implantação da stack de observabilidade. A ordem importa: existem dependências entre componentes e implantar fora de sequência pode causar falhas de inicialização.
+
+A **abordagem oficial desta stack é via Helm** (`kube-prometheus-stack`). O Prometheus, Alertmanager, Grafana, Node Exporter e Kube State Metrics são instalados num único chart, gerenciado pelo Prometheus Operator.
+
+> **Arquivos `*_LEGADO.md`** nesta pasta correspondem à antiga abordagem manual (Deployment/StatefulSet puros, sem Operator). **Não usar em produção** — mantidos apenas como referência histórica.
 
 ### Componentes da stack
 
@@ -12,42 +16,39 @@ Este guia define a ordem correta de implantação de todos os componentes da sta
 │  Namespace · StorageClass · Secret TLS · Istio · DNS    │
 └─────────────────────────┬───────────────────────────────┘
                           │
-          ┌───────────────┼───────────────┐
-          ▼               ▼               ▼
-    ┌──────────┐   ┌────────────┐   ┌──────────┐
-    │  MinIO   │   │ Prometheus │   │  Kiali   │
-    └────┬─────┘   └─────┬──────┘   └────┬─────┘
-         │               │               │
-    ┌────┴─────┐   ┌─────┴──────┐        │
-    │   Loki   │   │  Grafana   │        │
-    │ Promtail │   │Alertmanager│        │
-    └──────────┘   │Node Export.│        │
-                   │KSM         │        │
-                   └─────┬──────┘        │
-                         │               │
-                   ┌─────┴──────┐        │
-                   │Elasticsearch│       │
-                   └─────┬──────┘        │
-                         │               │
-                   ┌─────┴──────┐        │
-                   │   Jaeger   ├────────┘
-                   └─────┬──────┘
-                         │
-                   ┌─────┴──────┐
-                   │OTel Collect│
-                   └─────┬──────┘
-                         │
-                   ┌─────┴──────┐
-                   │Istio Mesh  │
-                   │Config      │
-                   └────────────┘
+                          ▼
+          ┌─────────────────────────────────┐
+          │   kube-prometheus-stack (Helm)  │
+          │   Prometheus · Alertmanager     │
+          │   Grafana · Node Exporter · KSM │
+          └────┬──────────────────────┬─────┘
+               │                      │
+         ┌─────┴─────┐          ┌─────┴─────┐
+         │   Loki    │          │   Kiali   │
+         │  Promtail │          │           │
+         └───────────┘          └─────┬─────┘
+                                      │
+         ┌────────────────────────────┤
+         │                            │
+   ┌─────┴─────┐                ┌─────┴──────┐
+   │Elasticsea.│                │  OTel      │
+   └─────┬─────┘                │ Collector  │
+         │                      └─────┬──────┘
+   ┌─────┴──────┐                     │
+   │   Jaeger   │◄────────────────────┘
+   └─────┬──────┘
+         │
+   ┌─────┴──────┐
+   │Istio Mesh  │
+   │Config      │
+   └────────────┘
 ```
 
 ---
 
 ## Pré-requisitos obrigatórios
 
-Antes de iniciar qualquer implantação, confirme que os itens abaixo existem no cluster:
+Antes de iniciar, confirme que os itens abaixo existem no cluster:
 
 ```bash
 # 1. Namespace
@@ -62,7 +63,10 @@ kubectl get secret <TLS_SECRET_NAME> -n istio-system
 # 4. Istio IngressGateway rodando
 kubectl get pods -n istio-system -l app=istio-ingressgateway
 
-# 5. DNS — confirmar resolução dos domínios
+# 5. Helm instalado
+helm version
+
+# 6. DNS — confirmar resolução dos domínios
 # grafana.<DOMAIN>, prometheus.<DOMAIN>, alertmanager.<DOMAIN>
 # loki.<DOMAIN>, kiali.<DOMAIN>, jaeger.<DOMAIN>
 ```
@@ -71,65 +75,40 @@ kubectl get pods -n istio-system -l app=istio-ingressgateway
 
 ## Ordem de implantação
 
-### Fase 1 — Métricas base
+### Fase 1 — Stack de métricas, alertas e visualização
 
-Estes componentes não têm dependências entre si e podem ser implantados em paralelo.
+Instala **Prometheus + Alertmanager + Grafana + Node Exporter + Kube State Metrics + Prometheus Operator** num único chart Helm.
 
-| Ordem | Tutorial                | Componentes                                                                 |
-| ----- | ----------------------- | --------------------------------------------------------------------------- |
-| 1.1   | `prometheus.md`         | ServiceAccount, RBAC, ConfigMap, PVC, Service, Deployment, Istio Gateway/VS |
-| 1.2   | `node-exporter.md`      | ServiceAccount, Service, DaemonSet                                          |
-| 1.3   | `kube-state-metrics.md` | ServiceAccount, RBAC, Service, Deployment                                   |
+| Tutorial                        | Componentes instalados                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `01-kube-prometheus-stack.md`   | Prometheus, Alertmanager, Grafana, Node Exporter, KSM, Operator, CRDs, Istio Gateway/VS |
 
 ```bash
 # Verificar Fase 1 completa
-kubectl get pods -n <NAMESPACE> -l app=prometheus
-kubectl get pods -n <NAMESPACE> -l app=node-exporter
-kubectl get pods -n <NAMESPACE> -l app=kube-state-metrics
+kubectl get pods -n <NAMESPACE> -l app.kubernetes.io/part-of=kube-prometheus-stack
+kubectl get servicemonitors.monitoring.coreos.com -A
+kubectl get prometheusrules.monitoring.coreos.com -A
 ```
 
 ---
 
-### Fase 2 — Visualização e alertas
+### Fase 2 — Logs
 
-Depende do Prometheus (Fase 1) estar operacional.
+Depende do Grafana (Fase 1) para datasource do Loki.
 
-| Ordem | Tutorial          | Componentes                                                                          |
-| ----- | ----------------- | ------------------------------------------------------------------------------------ |
-| 2.1   | `alertmanager.md` | ServiceAccount, ConfigMap, Service, StatefulSet, VirtualService                      |
-| 2.2   | `grafana.md`      | ServiceAccount, RBAC, Secret, ConfigMaps, PVC, Service, Deployment, Istio Gateway/VS |
+| Tutorial              | Componentes                                                                 |
+| --------------------- | --------------------------------------------------------------------------- |
+| `02-loki.md` — Parte 1 | Secret MinIO, PVC, Service, DestinationRule, Deployment MinIO, Job buckets  |
+| `02-loki.md` — Parte 2 | ConfigMap Loki, Services, DestinationRules, Deployments/StatefulSets, Istio |
+| `02-loki.md` — Parte 3 | ServiceAccount Promtail, RBAC, ConfigMap, DaemonSet                         |
 
 ```bash
 # Verificar Fase 2 completa
-kubectl get pods -n <NAMESPACE> -l app=alertmanager
-kubectl get pods -n <NAMESPACE> -l app=grafana
-
-# Confirmar que o Prometheus enxerga o Alertmanager
-kubectl port-forward -n <NAMESPACE> svc/prometheus 9090:9090
-# Acessar: http://localhost:9090/status → seção Alertmanagers
-```
-
----
-
-### Fase 3 — Logs
-
-Depende do Grafana (Fase 2) para o datasource do Loki.
-
-| Ordem | Tutorial                        | Componentes                                                                 |
-| ----- | ------------------------------- | --------------------------------------------------------------------------- |
-| 3.1   | `loki.md` — Parte 1             | Secret MinIO, PVC, Service, DestinationRule, Deployment MinIO               |
-| 3.2   | `loki.md` — Parte 1 (etapa 1.6) | Aguardar MinIO pronto                                                       |
-| 3.3   | `loki.md` — Parte 1 (etapa 1.7) | Job de criação de buckets                                                   |
-| 3.4   | `loki.md` — Parte 2             | ConfigMap Loki, Services, DestinationRules, Deployments/StatefulSets, Istio |
-| 3.5   | `loki.md` — Parte 3             | ServiceAccount Promtail, RBAC, ConfigMap, DaemonSet                         |
-
-```bash
-# Verificar Fase 3 completa
 kubectl get pods -n <NAMESPACE> -l app=minio
 kubectl get pods -n <NAMESPACE> -l app=loki
 kubectl get pods -n <NAMESPACE> -l app=promtail
 
-# Confirmar ring do Loki
+# Health do Loki
 kubectl port-forward -n <NAMESPACE> svc/loki-read 3100:3100
 curl http://localhost:3100/ready
 curl http://localhost:3100/ring
@@ -137,37 +116,36 @@ curl http://localhost:3100/ring
 
 ---
 
-### Fase 4 — Traces (storage)
+### Fase 3 — Traces (storage)
 
-O Elasticsearch deve estar saudável antes de implantar o Jaeger.
+O Elasticsearch deve estar saudável antes do Jaeger.
 
-| Ordem | Tutorial              | Componentes                                                    |
-| ----- | --------------------- | -------------------------------------------------------------- |
-| 4.1   | `jaeger.md` — Parte 1 | ServiceAccount, ConfigMap, Services Elasticsearch, StatefulSet |
-| 4.2   | Aguardar              | Elasticsearch cluster status `green` ou `yellow`               |
+| Tutorial                 | Componentes                                                    |
+| ------------------------ | -------------------------------------------------------------- |
+| `03-jaeger.md` — Parte 1 | ServiceAccount, ConfigMap, Services Elasticsearch, StatefulSet |
 
 ```bash
-# Verificar Fase 4 completa
+# Verificar Fase 3 completa
 kubectl rollout status statefulset/elasticsearch -n <NAMESPACE>
 
 kubectl port-forward -n <NAMESPACE> svc/elasticsearch-http 9200:9200
 curl http://localhost:9200/_cluster/health?pretty
-# "status": "green" ou "yellow" — ambos são válidos para prosseguir
+# "status": "green" ou "yellow" — ambos válidos para prosseguir
 ```
 
 ---
 
-### Fase 5 — Traces (Jaeger e OTel Collector)
+### Fase 4 — Traces (Jaeger + OTel Collector)
 
-Depende do Elasticsearch (Fase 4) e do Prometheus (Fase 1).
+Depende do Elasticsearch (Fase 3) e da Fase 1 (Prometheus).
 
-| Ordem | Tutorial              | Componentes                                      |
-| ----- | --------------------- | ------------------------------------------------ |
-| 5.1   | `jaeger.md` — Parte 2 | ConfigMap, Service, Deployment, Istio Gateway/VS |
-| 5.2   | `otel-collector.md`   | ConfigMap, Service, DestinationRule, Deployment  |
+| Tutorial                   | Componentes                                      |
+| -------------------------- | ------------------------------------------------ |
+| `03-jaeger.md` — Parte 2   | ConfigMap, Service, Deployment, Istio Gateway/VS |
+| `04-otel-collector.md`     | ConfigMap, Service, DestinationRule, Deployment  |
 
 ```bash
-# Verificar Fase 5 completa
+# Verificar Fase 4 completa
 kubectl get pods -n <NAMESPACE> -l app=jaeger
 kubectl get pods -n <NAMESPACE> -l app=otel-collector
 
@@ -182,17 +160,17 @@ curl http://localhost:13133
 
 ---
 
-### Fase 6 — Service Mesh (Kiali)
+### Fase 5 — Service Mesh (Kiali)
 
-Depende de Prometheus, Grafana e Jaeger estarem operacionais.
+Depende de Prometheus, Grafana e Jaeger.
 
-| Ordem | Tutorial             | Componentes                                                                    |
-| ----- | -------------------- | ------------------------------------------------------------------------------ |
-| 6.1   | `kiali.md` — Parte 1 | ServiceAccount, RBAC, Secret, ConfigMap, Service, Deployment, Istio Gateway/VS |
-| 6.2   | `kiali.md` — Parte 2 | EnvoyFilter Basic Auth (protege kiali e jaeger)                                |
+| Tutorial                | Componentes                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `05-kiali.md` — Parte 1 | ServiceAccount, RBAC, Secret, ConfigMap, Service, Deployment, Istio Gateway/VS |
+| `05-kiali.md` — Parte 2 | EnvoyFilter Basic Auth (protege kiali e jaeger)                                |
 
 ```bash
-# Verificar Fase 6 completa
+# Verificar Fase 5 completa
 kubectl get pods -n <NAMESPACE> -l app=kiali
 kubectl get envoyfilter basic-auth -n <NAMESPACE>
 
@@ -203,18 +181,18 @@ curl -I https://jaeger.<DOMAIN>       # deve retornar 401
 
 ---
 
-### Fase 7 — Istio Tracing
+### Fase 6 — Istio Tracing
 
-Deve ser aplicado por último, após o OTel Collector estar operacional.
+Aplicar por último, após o OTel Collector estar operacional.
 
-| Ordem | Tutorial              | Componentes                                    |
-| ----- | --------------------- | ---------------------------------------------- |
-| 7.1   | `istio-meshconfig.md` | Edição do ConfigMap `istio` no `istio-system`  |
-| 7.2   | `istio-meshconfig.md` | Restart do istiod                              |
-| 7.3   | `istio-meshconfig.md` | Recurso `Telemetry` no namespace `<NAMESPACE>` |
+| Tutorial                     | Componentes                                    |
+| ---------------------------- | ---------------------------------------------- |
+| `06-istio-meshconfig.md`     | Edição do ConfigMap `istio` no `istio-system`  |
+| `06-istio-meshconfig.md`     | Restart do istiod                              |
+| `06-istio-meshconfig.md`     | Recurso `Telemetry` no namespace `<NAMESPACE>` |
 
 ```bash
-# Verificar Fase 7 completa
+# Verificar Fase 6 completa
 kubectl get configmap istio -n istio-system -o jsonpath='{.data.mesh}' | grep otel-tracing
 kubectl get telemetry -n <NAMESPACE>
 kubectl rollout status deployment/istiod -n istio-system
@@ -225,13 +203,12 @@ kubectl rollout status deployment/istiod -n istio-system
 ## Resumo da ordem completa
 
 ```
-Fase 1  →  prometheus + node-exporter + kube-state-metrics
-Fase 2  →  alertmanager + grafana
-Fase 3  →  minio → (buckets) → loki → promtail
-Fase 4  →  elasticsearch → (cluster healthy)
-Fase 5  →  jaeger + otel-collector
-Fase 6  →  kiali + envoyfilter
-Fase 7  →  istio meshconfig + telemetry
+Fase 1  →  kube-prometheus-stack (Helm)
+Fase 2  →  minio → loki → promtail
+Fase 3  →  elasticsearch
+Fase 4  →  jaeger + otel-collector
+Fase 5  →  kiali + envoyfilter
+Fase 6  →  istio meshconfig + telemetry
 ```
 
 ---
@@ -260,28 +237,35 @@ Acessar as UIs:
 ## Dependências entre tutoriais
 
 ```
-prometheus.md
-  └── alertmanager.md        (Prometheus aponta para alertmanager:9093)
-  └── grafana.md             (datasource Prometheus)
-  └── kube-state-metrics.md  (job static_configs no prometheus.yml)
-  └── node-exporter.md       (job service discovery no prometheus.yml)
-  └── otel-collector.md      (job otel-spanmetrics no prometheus.yml)
-  └── jaeger.md              (metric_backend prometheus no jaeger-config)
+01-kube-prometheus-stack.md
+  └── 02-loki.md               (datasource Loki no Grafana)
+  └── 03-jaeger.md             (métricas SPM via Prometheus)
+  └── 04-otel-collector.md     (ServiceMonitor para job otel-spanmetrics)
+  └── 05-kiali.md              (métricas de malha + dashboards Istio)
 
-loki.md
-  └── grafana.md             (datasource Loki)
-  └── minio (interno)        (object storage dos chunks)
+02-loki.md
+  └── minio (interno)          (object storage dos chunks)
 
-jaeger.md
-  └── elasticsearch (interno) (backend de traces)
-  └── prometheus.md           (métricas SPM)
-  └── otel-collector.md       (recebe traces e encaminha ao Jaeger)
+03-jaeger.md
+  └── elasticsearch (interno)  (backend de traces)
+  └── 04-otel-collector.md     (recebe traces e encaminha ao Jaeger)
 
-kiali.md
-  └── prometheus.md           (métricas de malha)
-  └── grafana.md              (dashboards Istio)
-  └── jaeger.md               (traces)
+05-kiali.md
+  └── 01-kube-prometheus-stack (Prometheus + Grafana)
+  └── 03-jaeger.md             (traces)
 
-istio-meshconfig.md
-  └── otel-collector.md       (provider otel-tracing)
+06-istio-meshconfig.md
+  └── 04-otel-collector.md     (provider otel-tracing)
 ```
+
+---
+
+## Arquivos legados (`*_LEGADO.md`)
+
+Estes arquivos documentam a antiga abordagem manual (Deployment puro, sem Operator). Foram substituídos pelo `01-kube-prometheus-stack.md`. **Não usar em produção.**
+
+- `promethues_LEGADO.md`
+- `grafana_LEGADO.md`
+- `alertmanagement_LEGADO.md`
+- `node-exporter_LEGADO.md`
+- `kube-state-metrics_LEGADO.md`

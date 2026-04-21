@@ -615,7 +615,7 @@ echo -n 'admin:SuaSenha' | base64
 
 ### Grafana dashboards não aparecem no Kiali
 
-Verificar se os nomes dos dashboards no ConfigMap correspondem exatamente aos dashboards instalados no Grafana. Os dashboards Istio padrão são importados via ID no Grafana (ver tutorial: `grafana.md`).
+Verificar se os nomes dos dashboards no ConfigMap correspondem exatamente aos dashboards instalados no Grafana. Os dashboards Istio padrão são importados via ID no Grafana (ver tutorial: `01-kube-prometheus-stack.md`).
 
 ---
 

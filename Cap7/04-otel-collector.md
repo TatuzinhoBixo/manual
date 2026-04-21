@@ -4,7 +4,7 @@
 
 O OpenTelemetry Collector (OTel Collector) é o componente central de coleta e roteamento de telemetria da stack. Ele recebe traces das aplicações via protocolo OTLP (gRPC e HTTP), gera métricas RED (Rate, Errors, Duration) via conector `spanmetrics`, e encaminha os traces para o Jaeger.
 
-As métricas RED geradas pelo `spanmetrics` são expostas em formato Prometheus na porta `8889` e coletadas pelo Prometheus via job `otel-spanmetrics` (ver tutorial: `prometheus.md`). Essas métricas alimentam o painel **Service Performance Monitoring (SPM)** do Jaeger.
+As métricas RED geradas pelo `spanmetrics` são expostas em formato Prometheus na porta `8889` e coletadas pelo Prometheus via job `otel-spanmetrics` (ver tutorial: `01-kube-prometheus-stack.md`). Essas métricas alimentam o painel **Service Performance Monitoring (SPM)** do Jaeger.
 
 O OTel Collector roda **sem sidecar Istio** (`sidecar.istio.io/inject: "false"`) para evitar que os próprios traces de telemetria do Collector entrem no pipeline.
 
@@ -43,8 +43,8 @@ Aplicações (OTel SDK)
 
 - Namespace `<NAMESPACE>` criado no cluster
 - Istio instalado e operacional no cluster
-- Jaeger implantado no mesmo namespace (ver tutorial: `jaeger.md`)
-- Prometheus implantado com job `otel-spanmetrics` configurado (ver tutorial: `prometheus.md`)
+- Jaeger implantado no mesmo namespace (ver tutorial: `03-jaeger.md`)
+- Prometheus implantado com job `otel-spanmetrics` configurado (ver tutorial: `01-kube-prometheus-stack.md`)
 
 ---
 

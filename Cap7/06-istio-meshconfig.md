@@ -40,8 +40,8 @@ ConfigMap istio (istio-system)
 ## Pré-requisitos
 
 - Istio instalado via Helm (versão 1.29+) no cluster
-- OTel Collector implantado e operacional (ver tutorial: `otel-collector.md`)
-- Jaeger implantado e operacional (ver tutorial: `jaeger.md`)
+- OTel Collector implantado e operacional (ver tutorial: `04-otel-collector.md`)
+- Jaeger implantado e operacional (ver tutorial: `03-jaeger.md`)
 - `kubectl` com acesso ao namespace `istio-system`
 
 ---
