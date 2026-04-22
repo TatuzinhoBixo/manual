@@ -420,45 +420,34 @@ helm install blackbox-exporter prometheus-community/prometheus-blackbox-exporter
   --set serviceMonitor.enabled=true
 ```
 
-### ServiceMonitor — Monitoramento de Sites e SSL
+### Probe — Monitoramento de Sites e SSL
+
+O recurso `Probe` (CRD do Prometheus Operator) é a forma idiomática de declarar targets para o Blackbox Exporter. Os endereços são listados diretamente em `spec.targets.staticConfig.static`.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+kind: Probe
 metadata:
   name: blackbox-sites
   namespace: <NAMESPACE>
   labels:
     release: kube-prometheus-stack
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: prometheus-blackbox-exporter
-  endpoints:
-    - port: http
-      path: /probe
-      params:
-        module: [http_2xx]
-      relabelings:
-        - sourceLabels: [__address__]
-          targetLabel: __param_target
-        - sourceLabels: [__param_target]
-          targetLabel: instance
-        - targetLabel: __address__
-          replacement: blackbox-exporter-prometheus-blackbox-exporter:9115
-      metricRelabelings: []
----
-# ConfigMap com os targets a monitorar
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: blackbox-targets
-  namespace: <NAMESPACE>
-data:
-  targets: |
-    - https://gitlab.tatulab.com.br
-    - https://argo.tatulab.com.br
-    - https://grafana.tatulab.com.br
+  jobName: blackbox-http
+  interval: 60s
+  module: http_2xx
+  prober:
+    url: blackbox-exporter-prometheus-blackbox-exporter:9115
+    scheme: http
+    path: /probe
+  targets:
+    staticConfig:
+      static:
+        - https://gitlab.tatulab.com.br   # ex: https://meu-site.exemplo.com
+        - https://argo.tatulab.com.br
+        - https://grafana.tatulab.com.br
+      labels:
+        env: prod
 ```
 
 ### PrometheusRule — Alertas de SSL e Disponibilidade
@@ -530,6 +519,32 @@ spec:
             summary: "Latência alta detectada"
             description: "O endpoint {{ $labels.instance }} está respondendo em mais de 2 segundos."
 ```
+
+### Aplicar os manifestos
+
+Salve os YAMLs acima (ex: `blackbox-probe.yaml` e `blackbox-alerts.yaml`) e aplique:
+
+```bash
+kubectl apply -f blackbox-probe.yaml
+kubectl apply -f blackbox-alerts.yaml
+```
+
+### Validar
+
+```bash
+# Recursos criados
+kubectl get probe,prometheusrule -n <NAMESPACE>
+
+# Descobrir o nome do service do Prometheus (varia pelo release name do Helm)
+kubectl get svc -n <NAMESPACE> | grep -i prometheus
+# Comum: "prometheus-prometheus", "kube-prometheus-stack-prometheus", "prometheus-operated"
+
+# Port-forward (ajuste o nome conforme resultado acima)
+kubectl -n <NAMESPACE> port-forward svc/<SERVICE_PROMETHEUS> 9090:9090
+# Acesse: http://localhost:9090/targets
+```
+
+Na UI do Prometheus, em **Status → Targets**, deve aparecer o job `blackbox-http` com um target por site listado. Em **Alerts**, as regras `SSLCertificate*`, `SiteDown` e `SiteHighLatency` devem estar em estado `Inactive` (ou `Firing`, se houver problema).
 
 ---
 
@@ -624,19 +639,34 @@ stringData:
 
 > **Nota — inhibit_rules:** Quando um alerta `critical` está ativo para a mesma instância, os alertas `warning` equivalentes são suprimidos para evitar notificações duplicadas.
 
+> **Nota — SMTP:** Use **`smtp.<provedor>`** (envio), não `imap.<provedor>` (leitura). Prefira **porta 587 com STARTTLS** (`require_tls: true`). A porta 465 (TLS implícito / SMTPS) historicamente dá problema com o Alertmanager — o cliente tenta STARTTLS e o servidor derruba a conexão com `connection reset by peer`.
+
+> **Nota — Segurança:** `auth_password` em texto plano no YAML é aceitável apenas para testes locais. Em produção, mantenha a senha em Secret separado e referencie com `auth_password_file`, ou use SealedSecrets / external-secrets / SOPS. **Nunca versione** este YAML no git com senha em claro.
+
 ### Aplicar configuração
 
 ```bash
 kubectl apply -f alertmanager-config.yaml
-kubectl rollout restart statefulset/prometheus-alertmanager -n <NAMESPACE>
+kubectl rollout restart statefulset/alertmanager-prometheus-alertmanager -n <NAMESPACE>
+kubectl rollout status statefulset/alertmanager-prometheus-alertmanager -n <NAMESPACE>
+```
+
+Confirme que a config carregou sem erro:
+
+```bash
+kubectl logs -n <NAMESPACE> statefulset/alertmanager-prometheus-alertmanager --tail=20
+# Procure por: "Completed loading of configuration file"
 ```
 
 ### Testar envio de alerta
 
 ```bash
-# Disparar alerta de teste via API do Alertmanager
-kubectl port-forward svc/prometheus-alertmanager 9093:9093 -n <NAMESPACE> &
+# 1. Garante que não há port-forward antigo e sobe um novo
+pkill -f "port-forward.*9093" 2>/dev/null
+kubectl port-forward -n <NAMESPACE> svc/prometheus-alertmanager 9093:9093 >/dev/null 2>&1 &
+sleep 3   # <-- essencial: o curl imediato falha porque o forward ainda não subiu
 
+# 2. Dispara alerta de teste via API
 curl -X POST http://localhost:9093/api/v2/alerts \
   -H 'Content-Type: application/json' \
   -d '[{
@@ -648,149 +678,239 @@ curl -X POST http://localhost:9093/api/v2/alerts \
     "annotations": {
       "summary": "Alerta de teste",
       "description": "Verificando se o receiver está funcionando."
-    }
+    },
+    "startsAt": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"
   }]'
+
+# 3. Verifica que o alerta entrou
+curl -s http://localhost:9093/api/v2/alerts | jq '.[] | {alertname: .labels.alertname, state: .status.state}'
+```
+
+### Troubleshooting de envio SMTP
+
+Se o email não chegar, inspecione os logs do Alertmanager filtrando por eventos de notificação:
+
+```bash
+kubectl logs -n <NAMESPACE> statefulset/alertmanager-prometheus-alertmanager --since=10m \
+  | grep -iE "notify|smtp|email"
+```
+
+Erros comuns e causas:
+
+| Mensagem no log | Causa provável |
+| :-- | :-- |
+| `create SMTP client: EOF` | Host errado (ex: `imap.*` em vez de `smtp.*`) — servidor não fala SMTP |
+| `establish TLS connection to server: ... :465: read: connection reset by peer` | Porta 465 (TLS implícito) incompatível com STARTTLS do Alertmanager — use 587 |
+| `authentication failed` | Usuário/senha incorretos ou bloqueados pelo provedor |
+| `x509: certificate signed by unknown authority` | Servidor com certificado self-signed — ajuste `tls_config` |
+| Nenhum log de `notify` após alerta ativo | `receiver` não bate com rota — confira os `matchers` em `route.routes` |
+
+Sucesso esperado nos logs: `msg="Notify success"`.
+
+---
+
+## O que o stack monitora por padrão
+
+Ao instalar o kube-prometheus-stack, ~130 regras de alerta são criadas automaticamente. Com a config de rotas "tudo vai pra email" das seções anteriores, **qualquer uma delas gera notificação**. Categorizado por impacto:
+
+### 🔴 Infra crítica — acorda de madrugada
+
+| Categoria | Alertas-chave |
+| :-- | :-- |
+| API Kubernetes fora | `KubeAPIDown`, `KubeControllerManagerDown`, `KubeSchedulerDown`, `KubeProxyDown` |
+| etcd em perigo | `etcdMembersDown`, `etcdInsufficientMembers`, `etcdNoLeader`, `etcdDatabaseQuotaLowSpace` |
+| Node caído | `KubeNodeNotReady`, `KubeNodeUnreachable`, `KubeletDown` |
+| Disco enchendo | `NodeFilesystemAlmostOutOfSpace`, `KubePersistentVolumeFillingUp`, `NodeFilesystemFilesFillingUp` |
+
+### 🟠 Problemas reais — podem esperar horas
+
+| Categoria | Alertas-chave |
+| :-- | :-- |
+| Workloads degradados | `KubePodCrashLooping`, `KubePodNotReady`, `KubeDeploymentReplicasMismatch`, `KubeJobFailed` |
+| Node pressionado | `NodeCPUHighUsage`, `NodeMemoryHighUtilization`, `CPUThrottlingHigh`, `NodeSystemSaturation` |
+| Certificados internos | `KubeClientCertificateExpiration`, `KubeletClientCertificateExpiration` |
+| Sites (Blackbox) | `SiteDown`, `SiteHighLatency`, `SSLCertificateExpired`, `SSLCertificateExpiringSoon` |
+
+### 🟡 Configuração / capacidade — aviso
+
+| Categoria | Alertas-chave |
+| :-- | :-- |
+| Overcommit & quota | `KubeCPUOvercommit`, `KubeMemoryOvercommit`, `KubeQuotaAlmostFull`, `KubeHpaMaxedOut` |
+| Rollouts travados | `KubeDeploymentRolloutStuck`, `KubeStatefulSetUpdateNotRolledOut` |
+| Clock / rede | `NodeClockNotSynchronising`, `NodeNetworkInterfaceFlapping` |
+
+### 🟢 Saúde do próprio stack (meta-alertas)
+
+`Prometheus*`, `Alertmanager*`, `KubeStateMetrics*`, `PrometheusOperator*` — disparam só se o stack de observabilidade tiver problema interno.
+
+### ⚪ Casos especiais
+
+- **`Watchdog`** — **sempre ativo por design**. É um "Dead Man's Switch": sua ausência indica que o pipeline de alertas quebrou. **Não serve como alerta para email** (viraria 288 notificações/dia). O uso correto é enviá-lo a um serviço externo tipo [healthchecks.io](https://healthchecks.io/) ou [Dead Man's Snitch](https://deadmanssnitch.com/), que avisa quando o heartbeat **para**. Em ambiente de lab, o aceitável é silenciá-lo no email.
+- **`InfoInhibitor`** — regra auxiliar que suprime alertas de severidade `info`. Não gera notificação própria.
+
+### Listar as regras ativas no seu cluster
+
+```bash
+kubectl get prometheusrule -A -o jsonpath='{range .items[*].spec.groups[*].rules[*]}{.alert}{"\n"}{end}' | grep -v '^$' | sort -u
 ```
 
 ---
 
-## PrometheusRules — Alertas de Hardware e Kubernetes
+## Reduzindo o ruído — roteamento seletivo
 
-### Alertas de Hardware das VMs
+A config de rotas mostrada antes manda **tudo pra email**. Em produção isso vira spam. Abaixo um exemplo de rota mais silenciosa:
+
+- `critical` → email (acorda alguém)
+- `warning` → Teams (canal dedicado, sem email)
+- `info` / `Watchdog` → descartado (receiver nulo)
 
 ```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
-metadata:
-  name: hardware-alerts
-  namespace: <NAMESPACE>
-  labels:
-    release: kube-prometheus-stack
-spec:
-  groups:
-    - name: hardware.cpu
-      rules:
-        - alert: HighCPUUsage
-          expr: |
-            100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "CPU elevada em {{ $labels.instance }}"
-            description: "Uso de CPU acima de 85% por mais de 10 minutos. Valor atual: {{ $value | printf \"%.1f\" }}%"
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h          # ex: repetição menos agressiva
+  receiver: 'null'              # default: descarta o que não bate em nenhuma rota
+  routes:
+    # 1. Silencia o Watchdog explicitamente (ele é tratado por heartbeat externo)
+    - matchers:
+        - alertname = "Watchdog"
+      receiver: 'null'
 
-        - alert: CriticalCPUUsage
-          expr: |
-            100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
-          for: 5m
-          labels:
-            severity: critical
-          annotations:
-            summary: "CPU crítica em {{ $labels.instance }}"
-            description: "Uso de CPU acima de 95% por mais de 5 minutos. Valor atual: {{ $value | printf \"%.1f\" }}%"
+    # 2. Critical → email
+    - matchers:
+        - severity = "critical"
+      receiver: 'critical-email'
+      continue: false
 
-    - name: hardware.memory
-      rules:
-        - alert: HighMemoryUsage
-          expr: |
-            (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Memória elevada em {{ $labels.instance }}"
-            description: "Uso de memória acima de 85% por mais de 10 minutos. Valor atual: {{ $value | printf \"%.1f\" }}%"
+    # 3. Warning → Teams (sem email)
+    - matchers:
+        - severity = "warning"
+      receiver: 'warning-teams'
+      continue: false
 
-        - alert: CriticalMemoryUsage
-          expr: |
-            (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
-          for: 5m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Memória crítica em {{ $labels.instance }}"
-            description: "Uso de memória acima de 95% por mais de 5 minutos. Valor atual: {{ $value | printf \"%.1f\" }}%"
+receivers:
+  - name: 'null'                # receiver vazio = descarta
+  - name: 'critical-email'
+    email_configs:
+      - to: '<EMAIL_DESTINO>'
+        from: '<EMAIL_REMETENTE>'
+        smarthost: 'smtp.<PROVEDOR>:587'
+        auth_username: '<SMTP_USER>'
+        auth_password_file: '/etc/alertmanager/secrets/smtp-password'
+        require_tls: true
+  - name: 'warning-teams'
+    msteams_configs:
+      - webhook_url: '<TEAMS_WEBHOOK_URL>'
+        title: '⚠️ WARNING: {{ .GroupLabels.alertname }}'
 
-    - name: hardware.disk
-      rules:
-        - alert: HighDiskUsage
-          expr: |
-            (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})) * 100 > 80
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Disco elevado em {{ $labels.instance }}"
-            description: "Uso do disco {{ $labels.mountpoint }} acima de 80%. Valor atual: {{ $value | printf \"%.1f\" }}%"
-
-        - alert: CriticalDiskUsage
-          expr: |
-            (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})) * 100 > 90
-          for: 5m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Disco crítico em {{ $labels.instance }}"
-            description: "Uso do disco {{ $labels.mountpoint }} acima de 90%. Valor atual: {{ $value | printf \"%.1f\" }}%"
-
-        - alert: DiskWillFillIn24h
-          expr: |
-            predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}[6h], 24 * 3600) < 0
-          for: 1h
-          labels:
-            severity: warning
-          annotations:
-            summary: "Disco vai encher em 24h em {{ $labels.instance }}"
-            description: "Projeção indica que o disco {{ $labels.mountpoint }} ficará cheio em menos de 24 horas."
-
-    - name: hardware.network
-      rules:
-        - alert: NodeNetworkUnreachable
-          expr: |
-            kube_node_status_condition{condition="NetworkUnavailable",status="true"} == 1
-          for: 2m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Node sem rede: {{ $labels.node }}"
-            description: "O node {{ $labels.node }} está com rede indisponível."
+inhibit_rules:
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
+    equal: ['alertname', 'instance']
 ```
 
-### Alertas de Kubernetes
+> **Dica:** suba o `repeat_interval` gradualmente. Comece em `4h`, observe quais alertas repetem demais, e só então aumente para `12h` / `24h` em warnings.
+
+---
+
+## Alertmanager vs. Grafana Alerting
+
+O roteamento/notificação de alertas pode ser feito por **dois motores distintos**: o **Alertmanager** (parte do stack Prometheus) ou o **Grafana Alerting** (sistema próprio do Grafana, ex-"Unified Alerting"). Ambos coexistem no kube-prometheus-stack e escolher um não é decisão técnica trivial.
+
+### Comparativo
+
+| Aspecto | Alertmanager | Grafana Alerting |
+| :-- | :-- | :-- |
+| Onde moram as regras | `PrometheusRule` (YAML / GitOps) | UI do Grafana ou arquivos de provisioning |
+| Quem avalia as expressões | Prometheus | Grafana |
+| Quem roteia/notifica | Alertmanager (`route`, `receivers`) | Contact Points + Notification Policies |
+| Datasources suportados | Apenas Prometheus | Prometheus, Loki, Tempo, Mimir, InfluxDB, etc. |
+| GitOps / versionamento | ✅ Nativo (CRDs do Operator) | ⚠️ Requer provisioning YAML + ConfigMaps |
+| Disponibilidade | Independente do Grafana | Depende do Grafana rodando |
+| Curva de aprendizado | Média (YAML + PromQL) | Baixa (UI) |
+
+### Cenário A — Só Alertmanager (recomendado para GitOps)
+
+É o cenário documentado nas seções anteriores. Regras como código via `PrometheusRule`, notificação via Alertmanager. Grafana fica apenas como camada de **visualização**.
+
+```
+PrometheusRule ──► Prometheus ──► Alertmanager ──► Email / Teams
+```
+
+**Quando usar:** infra gerenciada por GitOps, equipe acostumada com YAML, alertas só sobre métricas Prometheus.
+
+### Cenário B — Só Grafana Alerting
+
+Desabilita-se o Alertmanager e as regras passam a ser criadas no Grafana (UI → **Alerting → Alert rules**). Notificações configuradas em **Contact Points** e roteadas por **Notification Policies**.
+
+```
+Grafana (avalia query) ──► Grafana Alerting ──► Email / Teams
+```
+
+Para desabilitar o Alertmanager do stack:
+
+```yaml
+# values.yaml do kube-prometheus-stack
+alertmanager:
+  enabled: false
+```
+
+**Quando usar:** equipe prefere UI, necessidade de alertar sobre Loki/Tempo além de Prometheus, pouco uso de GitOps.
+
+### Cenário C — Híbrido (Grafana + Alertmanager externo)
+
+Regras criadas no Grafana, mas a notificação sai pelo Alertmanager do stack (reaproveita os `receivers` de email/Teams já configurados). O Alertmanager é registrado no Grafana como **External Alertmanager**.
+
+```
+Grafana (avalia) ──► Alertmanager externo ──► Email / Teams
+```
+
+Configuração no Grafana: **Administration → General → Alerting → External Alertmanagers** → apontar para `http://kube-prometheus-stack-alertmanager.<NAMESPACE>.svc:9093`.
+
+**Quando usar:** quer flexibilidade do Grafana pra criar regras multi-datasource, mas já tem receivers maduros no Alertmanager e não quer duplicá-los.
+
+### Resumo de decisão
+
+- **Começando do zero e usando GitOps?** → Cenário A.
+- **Precisa alertar sobre logs (Loki) ou traces (Tempo)?** → Cenário B ou C.
+- **Já tem Alertmanager bem configurado mas quer criar regras mais rápido pela UI?** → Cenário C.
+
+> **Importante:** os três cenários são mutuamente exclusivos no nível da *regra* — uma mesma regra vive em um lugar só. Mas é possível ter **regras antigas no Alertmanager** e **regras novas no Grafana Alerting** convivendo (o que leva ao Cenário C na prática).
+
+---
+
+## PrometheusRules — Alertas complementares
+
+> **Atenção — evite duplicar alertas:** o kube-prometheus-stack já instala ~130 regras por padrão cobrindo CPU, memória, disco, nodes, pods e deployments (ver seção [O que o stack monitora por padrão](#o-que-o-stack-monitora-por-padrão)). Criar alertas adicionais para os **mesmos sintomas** (ex: um `HighCPUUsage` próprio ao lado do `NodeCPUHighUsage` built-in) gera **notificações duplicadas**, pois o Alertmanager agrupa por `alertname` — nomes diferentes contam como eventos diferentes.
+>
+> Esta seção traz apenas alertas que **não estão cobertos** (ou estão cobertos de forma incompleta) pelas regras padrão.
+
+### O que vamos adicionar — e por quê
+
+| Alerta | Lacuna que preenche |
+| :-- | :-- |
+| `PodOOMKilled` | Built-ins não alertam especificamente quando um container é morto por OOM. Útil pra capacity planning de limits. |
+| `DiskWillFillIn24h` | Forecasting com `predict_linear` — antecipa enchimento antes do `NodeFilesystemSpaceFillingUp` atual. |
+| `PVCPending` | Nenhum built-in cobre PVC preso em `Pending` (problema comum de storage class / provisioner). |
+| `ManyPodsOnNode` | O built-in `KubeletTooManyPods` só dispara em ≥95% — este pega gargalo mais cedo (>85%). |
+
+### Manifesto
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: kubernetes-alerts
+  name: custom-alerts
   namespace: <NAMESPACE>
   labels:
     release: kube-prometheus-stack
 spec:
   groups:
-    - name: kubernetes.pods
+    - name: custom.workloads
       rules:
-        - alert: PodCrashLooping
-          expr: |
-            rate(kube_pod_container_status_restarts_total[15m]) * 60 * 15 > 5
-          for: 5m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Pod em CrashLoopBackOff: {{ $labels.pod }}"
-            description: "O pod {{ $labels.pod }} no namespace {{ $labels.namespace }} reiniciou mais de 5 vezes nos últimos 15 minutos."
-
-        - alert: PodNotReady
-          expr: |
-            kube_pod_status_ready{condition="false"} == 1
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Pod não está pronto: {{ $labels.pod }}"
-            description: "O pod {{ $labels.pod }} no namespace {{ $labels.namespace }} não está em estado Ready há mais de 10 minutos."
-
         - alert: PodOOMKilled
           expr: |
             kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
@@ -799,44 +919,8 @@ spec:
             severity: critical
           annotations:
             summary: "Pod morto por OOM: {{ $labels.pod }}"
-            description: "O container {{ $labels.container }} do pod {{ $labels.pod }} foi encerrado por falta de memória (OOMKilled)."
+            description: "O container {{ $labels.container }} do pod {{ $labels.pod }} (ns {{ $labels.namespace }}) foi encerrado por falta de memória (OOMKilled)."
 
-    - name: kubernetes.nodes
-      rules:
-        - alert: NodeNotReady
-          expr: |
-            kube_node_status_condition{condition="Ready",status="true"} == 0
-          for: 5m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Node não está Ready: {{ $labels.node }}"
-            description: "O node {{ $labels.node }} não está em estado Ready há mais de 5 minutos."
-
-        - alert: NodeHighPodCount
-          expr: |
-            kubelet_running_pods / kube_node_status_allocatable{resource="pods"} * 100 > 90
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Node com muitos pods: {{ $labels.node }}"
-            description: "O node {{ $labels.node }} está com mais de 90% da capacidade de pods utilizada."
-
-    - name: kubernetes.deployments
-      rules:
-        - alert: DeploymentReplicasMismatch
-          expr: |
-            kube_deployment_spec_replicas != kube_deployment_status_available_replicas
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Réplicas divergentes: {{ $labels.deployment }}"
-            description: "O deployment {{ $labels.deployment }} no namespace {{ $labels.namespace }} tem réplicas divergentes entre spec e status."
-
-    - name: kubernetes.pvc
-      rules:
         - alert: PVCPending
           expr: |
             kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
@@ -845,8 +929,48 @@ spec:
             severity: warning
           annotations:
             summary: "PVC em Pending: {{ $labels.persistentvolumeclaim }}"
-            description: "O PVC {{ $labels.persistentvolumeclaim }} no namespace {{ $labels.namespace }} está em Pending há mais de 10 minutos."
+            description: "O PVC {{ $labels.persistentvolumeclaim }} no namespace {{ $labels.namespace }} está em Pending há mais de 10 minutos. Verifique StorageClass e provisioner."
+
+    - name: custom.capacity
+      rules:
+        - alert: DiskWillFillIn24h
+          expr: |
+            predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}[6h], 24 * 3600) < 0
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Disco vai encher em 24h em {{ $labels.instance }}"
+            description: "Projeção linear indica que {{ $labels.mountpoint }} ficará cheio em menos de 24 horas."
+
+        - alert: ManyPodsOnNode
+          expr: |
+            kubelet_running_pods / kube_node_status_allocatable{resource="pods"} * 100 > 85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Node com muitos pods: {{ $labels.node }}"
+            description: "O node {{ $labels.node }} está com mais de 85% da capacidade de pods utilizada (valor atual: {{ $value | printf \"%.0f\" }}%)."
 ```
+
+### Aplicar
+
+```bash
+kubectl apply -f custom-alerts.yaml
+```
+
+### Validar
+
+```bash
+# Regra criada
+kubectl get prometheusrule -n <NAMESPACE> custom-alerts
+
+# Prometheus reconheceu as novas regras
+curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[] | select(.name | startswith("custom.")) | {name: .name, rules: [.rules[].name]}'
+```
+
+As regras devem aparecer em **Prometheus UI → Status → Rules** em `custom.workloads` e `custom.capacity`.
 
 ---
 
@@ -904,13 +1028,13 @@ kubectl get prometheusrule -A
 kubectl logs -n <NAMESPACE> prometheus-prometheus-0 -c prometheus
 
 # Logs do Grafana
-kubectl logs -n <NAMESPACE> deployment/prometheus-grafana -c grafana
+kubectl logs -n <NAMESPACE> deployment/kube-prometheus-stack-grafana -c grafana
 
 # Logs do Alertmanager
 kubectl logs -n <NAMESPACE> alertmanager-prometheus-alertmanager-0
 
 # Verificar configuração interna do Prometheus
-kubectl exec -n <NAMESPACE> prometheus-prometheus-0 -c prometheus -- \
+kubectl exec -n <NAMESPACE> prometheus-prometheus-prometheus-0 -c prometheus -- \
   cat /etc/prometheus/prometheus.yml
 
 # Verificar configuração interna do Alertmanager
@@ -918,10 +1042,12 @@ kubectl exec -n <NAMESPACE> alertmanager-prometheus-alertmanager-0 -- \
   cat /etc/alertmanager/alertmanager.yaml
 
 # Reiniciar stack completa
-kubectl rollout restart statefulset/prometheus-prometheus -n <NAMESPACE>
-kubectl rollout restart statefulset/prometheus-alertmanager -n <NAMESPACE>
-kubectl rollout restart deployment/prometheus-grafana -n <NAMESPACE>
+kubectl rollout restart statefulset/prometheus-prometheus-prometheus -n <NAMESPACE>
+kubectl rollout restart statefulset/alertmanager-prometheus-alertmanager -n <NAMESPACE>
+kubectl rollout restart deployment/kube-prometheus-stack-grafana -n <NAMESPACE>
 ```
+
+> **Nota:** os nomes acima seguem o padrão `<release-helm>-<componente>`. Confirme com `kubectl get pods,svc -n <NAMESPACE>` se seu release Helm usa prefixo diferente.
 
 ---
 
@@ -954,18 +1080,26 @@ O label `release: kube-prometheus-stack` (ou o nome do seu release Helm) deve es
 
 ### Alertmanager não envia notificações
 
+Ver também a tabela de erros SMTP na seção [Troubleshooting de envio SMTP](#troubleshooting-de-envio-smtp).
+
 **Verificação:**
 ```bash
-# Verificar se o Secret está correto
-kubectl get secret alertmanager-prometheus-alertmanager -n <NAMESPACE> -o yaml
+# Verificar se o Secret foi aplicado
+kubectl get secret alertmanager-prometheus-alertmanager -n <NAMESPACE>
 
-# Verificar logs do Alertmanager
-kubectl logs -n <NAMESPACE> alertmanager-prometheus-alertmanager-0
+# Verificar se a config carregou sem erro
+kubectl logs -n <NAMESPACE> alertmanager-prometheus-alertmanager-0 | grep -iE "loading|error"
 
-# Verificar alertas ativos via API
-kubectl port-forward svc/prometheus-alertmanager 9093:9093 -n <NAMESPACE> &
-curl http://localhost:9093/api/v2/alerts
+# Ver alertas ativos e para qual receiver foram roteados
+kubectl port-forward -n <NAMESPACE> svc/prometheus-alertmanager 9093:9093 >/dev/null 2>&1 &
+sleep 3
+curl -s http://localhost:9093/api/v2/alerts | jq '.[] | {alertname: .labels.alertname, severity: .labels.severity, receivers: [.receivers[].name]}'
+
+# Filtrar logs por tentativas de notificação
+kubectl logs -n <NAMESPACE> alertmanager-prometheus-alertmanager-0 --since=10m | grep -iE "notify|smtp|email"
 ```
+
+Sinais de sucesso nos logs: `msg="Notify success"`. Alerta rota para receiver `null` (config de ruído): notificação **não é enviada** por design.
 
 ### PVC em Pending
 
@@ -989,3 +1123,4 @@ Confirmar que o `storageClassName` no `values.yaml` corresponde ao StorageClass 
 - [Alertmanager — Microsoft Teams](https://prometheus.io/docs/alerting/latest/configuration/#msteams_config)
 - [Grafana Dashboards](https://grafana.com/grafana/dashboards/)
 - [PromQL Reference](https://prometheus.io/docs/prometheus/latest/querying/basics/)
+- [healthchecks.io](https://healthchecks.io/) — serviço externo pra consumir o `Watchdog` (Dead Man's Switch)

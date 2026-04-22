@@ -40,8 +40,8 @@ Pods do cluster
 
 | Variável                      | Descrição                                      | Exemplo            |
 | ----------------------------- | ---------------------------------------------- | ------------------ |
-| `<NAMESPACE>`                 | Namespace de observabilidade                   | `observability`    |
-| `<STORAGE_CLASS>`             | StorageClass do namespace                      | `sc-observability` |
+| `<NAMESPACE>`                 | Namespace de observabilidade                   | `monitor`          |
+| `<STORAGE_CLASS>`             | StorageClass do namespace                      | `sc-monitor`       |
 | `<MINIO_STORAGE_SIZE>`        | Tamanho do PVC do MinIO                        | `200Gi`            |
 | `<LOKI_WRITE_STORAGE_SIZE>`   | Tamanho do PVC por pod loki-write              | `10Gi`             |
 | `<LOKI_BACKEND_STORAGE_SIZE>` | Tamanho do PVC por pod loki-backend            | `10Gi`             |
@@ -69,6 +69,17 @@ Pods do cluster
 ### Parte 1 — MinIO
 
 O MinIO deve ser implantado **antes** do Loki. Os componentes Loki dependem dos buckets `loki-data` e `loki-ruler` para inicializar.
+
+Escolha entre **duas topologias**:
+
+| Opção | Réplicas | Quando usar |
+| :-- | :-- | :-- |
+| **A — Standalone** | 1 | Lab, ambientes single-node, volume baixo de logs. Sem HA. |
+| **B — Distribuído** | **4** (mínimo) | Produção, HA real com erasure coding. Tolera 1 drive offline. |
+
+> **Por que 4 e não 3?** MinIO distribuído exige `drives >= 4` para erasure coding. Com menos, o servidor recusa iniciar. Outros números válidos: 6, 8, 16. Este tutorial cobre a configuração de 4 pods.
+
+Os passos **1.1 (Secret)**, **1.3 (Service)**, **1.4 (DestinationRule)** e **1.6 (Buckets)** são **comuns às duas opções**. O que muda é o passo **1.2 (PVC/headless)** e o **1.5 (Deployment vs StatefulSet)**.
 
 #### 1.1 Criar o Secret de credenciais
 
@@ -111,7 +122,9 @@ kubectl apply -f minio-secret.yaml
 
 ---
 
-#### 1.2 Criar o PVC do MinIO
+#### 1.2 Criar o armazenamento do MinIO
+
+**🅐 Opção A — Standalone (PVC único)**
 
 ```yaml
 # minio-pvc.yaml
@@ -125,14 +138,43 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: <STORAGE_CLASS>
+  storageClassName: <STORAGE_CLASS>   # ex: sc-monitor
   resources:
     requests:
-      storage: <MINIO_STORAGE_SIZE>
+      storage: <MINIO_STORAGE_SIZE>   # ex: 200Gi
 ```
 
 ```bash
 kubectl apply -f minio-pvc.yaml
+```
+
+**🅑 Opção B — Distribuído (Service headless)**
+
+Na Opção B não criamos PVC manualmente — o StatefulSet (passo 1.5B) usa `volumeClaimTemplates` que gera 1 PVC por pod automaticamente. O que criamos aqui é o **Service headless** necessário para os pods se descobrirem por DNS (`minio-0.minio-headless...`, `minio-1...`, etc.):
+
+```yaml
+# minio-headless-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-headless
+  namespace: <NAMESPACE>
+  labels:
+    app: minio
+spec:
+  type: ClusterIP
+  clusterIP: None              # headless
+  publishNotReadyAddresses: true
+  selector:
+    app: minio
+  ports:
+    - name: http-api
+      port: 9000
+      targetPort: 9000
+```
+
+```bash
+kubectl apply -f minio-headless-service.yaml
 ```
 
 ---
@@ -193,9 +235,11 @@ kubectl apply -f minio-destinationrule.yaml
 
 ---
 
-#### 1.5 Criar o Deployment do MinIO
+#### 1.5 Criar o workload do MinIO
 
-> **Nota:** Imagem fixada em `minio/minio:RELEASE.2024-12-18T13-15-44Z`. Verifique a versão mais recente em https://hub.docker.com/r/minio/minio/tags antes de implantar em produção.
+> **Nota — imagem:** antes de aplicar, confirme a tag mais recente em https://hub.docker.com/r/minio/minio/tags. Os exemplos abaixo usam `<MINIO_IMAGE>` como placeholder; substitua por uma tag `RELEASE.YYYY-MM-DDTHH-MM-SSZ` recente (`# ex: minio/minio:RELEASE.2026-02-15T00-00-00Z`).
+
+**🅐 Opção A — Standalone (Deployment, 1 réplica)**
 
 ```yaml
 # minio-deployment.yaml
@@ -221,7 +265,7 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:RELEASE.2024-12-18T13-15-44Z # verifique a versão mais recente
+          image: <MINIO_IMAGE>   # ex: minio/minio:RELEASE.2026-02-15T00-00-00Z
           args:
             - server
             - /data
@@ -273,10 +317,122 @@ spec:
 
 ```bash
 kubectl apply -f minio-deployment.yaml
-
-# Aguardar MinIO estar pronto antes de continuar
 kubectl rollout status deployment/minio -n <NAMESPACE>
 ```
+
+**🅑 Opção B — Distribuído (StatefulSet, 4 réplicas)**
+
+Diferenças principais em relação à Opção A:
+
+- **StatefulSet** no lugar de Deployment (pods com identidade estável: `minio-0`, `minio-1`, `minio-2`, `minio-3`)
+- **`volumeClaimTemplates`** — cada pod recebe seu próprio PVC de `<MINIO_STORAGE_SIZE>`
+- **`serviceName: minio-headless`** — usa o Service headless criado em 1.2B
+- **args do MinIO** — listam explicitamente os 4 pods, ativando o modo distribuído com erasure coding
+- **Anti-affinity** — opcional mas recomendado: espalhar pods por nodes diferentes
+
+```yaml
+# minio-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: <NAMESPACE>
+  labels:
+    app: minio
+spec:
+  serviceName: minio-headless
+  replicas: 4
+  podManagementPolicy: Parallel   # pods sobem em paralelo — necessário pro cluster formar
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+        sidecar.istio.io/inject: "false"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: minio
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: minio
+          image: <MINIO_IMAGE>   # ex: minio/minio:RELEASE.2026-02-15T00-00-00Z
+          args:
+            - server
+            - --console-address
+            - ":9001"
+            - http://minio-{0...3}.minio-headless.<NAMESPACE>.svc.cluster.local/data
+          ports:
+            - containerPort: 9000
+              name: http-api
+            - containerPort: 9001
+              name: http-console
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-password
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: minio
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: <STORAGE_CLASS>   # ex: sc-monitor
+        resources:
+          requests:
+            storage: <MINIO_STORAGE_SIZE>   # ex: 200Gi (por pod — total = 4×)
+```
+
+```bash
+kubectl apply -f minio-statefulset.yaml
+kubectl rollout status statefulset/minio -n <NAMESPACE>
+
+# Verificar que os 4 pods subiram
+kubectl get pods -n <NAMESPACE> -l app=minio -o wide
+
+# Verificar logs — deve mostrar "MinIO Object Storage Server" e "Status: 4 Online, 0 Offline"
+kubectl logs -n <NAMESPACE> minio-0 | grep -iE "online|offline|erasure"
+```
+
+> **Capacidade útil:** com 4 pods e erasure coding padrão (EC:2), a capacidade útil é ~**50%** do total. Com `<MINIO_STORAGE_SIZE>=200Gi` × 4 pods = 800Gi provisionado, ~400Gi utilizável.
 
 ---
 
@@ -898,7 +1054,7 @@ metadata:
   namespace: <NAMESPACE>
 spec:
   selector:
-    app: observability-ingressgateway
+    app: monitor-ingressgateway    # ex: monitor-ingressgateway (IngressGateway dedicado)
     istio: ingressgateway
   servers:
     - hosts:
