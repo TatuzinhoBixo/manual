@@ -139,14 +139,14 @@ kubectl apply -f kiali-rbac.yaml
 >
 > ```bash
 > # Gerar uma chave segura
-> openssl rand -base64 32
+> openssl rand -hex 16   # gera 32 caracteres hexadecimais
 >
 > # Selar com Sealed Secrets
-> kubectl create secret generic kiali-signing-key \
->   --from-literal=signing-key='<KIALI_SIGNING_KEY>' \
->   --namespace <NAMESPACE> \
->   --dry-run=client -o yaml | \
->   kubeseal --format yaml > kiali-signing-key-sealed.yaml
+kubectl create secret generic kiali-signing-key \
+--from-literal=signing-key='<KIALI_SIGNING_KEY>' \
+--namespace <NAMESPACE> \
+--dry-run=client -o yaml | \
+kubeseal --format yaml > kiali-signing-key-sealed.yaml
 >
 > kubectl apply -f kiali-signing-key-sealed.yaml
 > ```
@@ -163,6 +163,7 @@ metadata:
 type: Opaque
 stringData:
   signing-key: "<KIALI_SIGNING_KEY>" # mínimo 16 caracteres
+  #"d936b7e4574ea4e93d1bb14a3f06e122"
 ```
 
 ```bash
@@ -626,3 +627,7 @@ Verificar se os nomes dos dashboards no ConfigMap correspondem exatamente aos da
 - [Istio EnvoyFilter](https://istio.io/latest/docs/reference/config/networking/envoy-filter/)
 - [Envoy Lua HTTP Filter](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/lua_filter)
 - [quay.io/kiali/kiali tags](https://quay.io/repository/kiali/kiali?tab=tags)
+
+
+
+eyJhbGciOiJSUzI1NiIsImtpZCI6InFwbmhvRlVZYlV0WElrSW1GVEg0eUZXcnhPV0pZOGtkN1hEUFpocGplZzAifQ.eyJhdWQiOlsiaHR0cHM6Ly9rdWJlcm5ldGVzLmRlZmF1bHQuc3ZjLmNsdXN0ZXIubG9jYWwiLCJya2UyIl0sImV4cCI6MTc3NzA2NjI2MSwiaWF0IjoxNzc3MDYyNjYxLCJpc3MiOiJodHRwczovL2t1YmVybmV0ZXMuZGVmYXVsdC5zdmMuY2x1c3Rlci5sb2NhbCIsImp0aSI6ImRjZjFlNjJhLTRmNTktNDg5Mi05ZmUwLWU2YmM0MGJhMjczYyIsImt1YmVybmV0ZXMuaW8iOnsibmFtZXNwYWNlIjoibW9uaXRvciIsInNlcnZpY2VhY2NvdW50Ijp7Im5hbWUiOiJraWFsaSIsInVpZCI6ImQ3NTVhYWNlLTBmYmMtNDM3OC04MDVjLWRmYzdjMTUyODU0NSJ9fSwibmJmIjoxNzc3MDYyNjYxLCJzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6bW9uaXRvcjpraWFsaSJ9.KSnZjZyg9uXwFS7JYnCNQMCPqX319ZiZ3DC4wIbIz8HsVcH-19uW7amPkekSMJCrKTIqBvgl96MegWEgK790wjxXKy8qvKbR_wLcDDcXmIVdvQ3KR7edv1Bakvro1O_GyMWSohhbLYfTVsyophYwRKxRQtHoI5YgHq0tVUyAc13jlpl3t7KQSlolzkSnWUeDSs43J5mlz4eaqH6wFsOHOxtA9dBSpmVbOmoLj45h6L0nfXKcSz8ky7qFu4osbG1jMVNSwfW81x1uAy2p45Fl_bhg-oufu7dxFYP83YRn_2pP2Hgy3itOSL3_D2Q4IP45pupia2pWNoeXWZsHwAWEKg

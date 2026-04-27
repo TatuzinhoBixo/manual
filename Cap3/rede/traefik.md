@@ -97,16 +97,16 @@ helm install <NOME_RELEASE> traefik/traefik \
 Para um Traefik que monitora apenas um namespace específico, adicione a flag de restrição via providers:
 
 ```bash
-helm install <NOME_RELEASE> traefik/traefik \
+helm upgrade traefik-<NAMESPACE> traefik/traefik \
   --namespace <NAMESPACE> \
-  --create-namespace \
   --set deployment.replicas=<NUM_REPLICAS> \
   --set service.type=LoadBalancer \
-  --set service.loadBalancerIP=<IP_LOADBALANCER> \
+  --set service.loadBalancerIP=<IP>> \
   --set ingressClass.enabled=true \
   --set ingressClass.isDefaultClass=false \
   --set "providers.kubernetesCRD.namespaces={<NAMESPACE>}" \
-  --set "providers.kubernetesIngress.namespaces={<NAMESPACE>}"
+  --set "providers.kubernetesIngress.namespaces={<NAMESPACE>}" \
+  --set "service.annotations.metallb\.universe\.tf/loadBalancerIPs=<IP>"
 ```
 
 ---

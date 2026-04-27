@@ -215,7 +215,7 @@ spec:
             privileged: true
       containers:
         - name: elasticsearch
-          image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0 # verifique a versão mais recente
+          image: docker.elastic.co/elasticsearch/elasticsearch:<VERSAO> # verifique a versão mais recente
           ports:
             - name: http
               containerPort: 9200
@@ -229,13 +229,13 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: ES_JAVA_OPTS
-              value: "-Xms<ES_HEAP_SIZE> -Xmx<ES_HEAP_SIZE>"
+              value: "-Xms1g -Xmx1g"
           resources:
             requests:
-              memory: <ES_MEMORY_REQUEST>
+              memory: 2Gi
               cpu: 1000m
             limits:
-              memory: <ES_MEMORY_LIMIT>
+              memory: 2Gi
               cpu: 2000m
           volumeMounts:
             - name: data
@@ -337,7 +337,7 @@ data:
         metric_backends:
           prom:
             prometheus:
-              endpoint: <PROMETHEUS_URL>
+              endpoint: <PROMETHEUS_URL> ou http://prometheus-operated.<NAMESPACE>.svc.cluster.local:9090
               # normalize_calls: true → adiciona _total ao nome dos counters
               # normalize_duration: true → adiciona _milliseconds ao nome de latência
               # Necessário pois o OTel Collector exporta com esses sufixos normalizados

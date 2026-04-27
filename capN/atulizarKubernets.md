@@ -110,6 +110,7 @@ sha256sum -c sha256sum-amd64.txt --ignore-missing
 ---
 
 ### 2. Parar o serviço
+
 ```bash
 systemctl stop rke2-server
 ```
@@ -119,6 +120,7 @@ systemctl stop rke2-server
 ---
 
 ### 3. Atualizar binários
+
 ```bash
 # Extrair arquivos sobrescrevendo os antigos
 tar -xzf rke2.linux-amd64.tar.gz -C /usr/local --overwrite
@@ -132,6 +134,7 @@ tar -xzf rke2.linux-amd64.tar.gz -C /usr/local --overwrite
 ---
 
 ### 4. Reiniciar serviço
+
 ```bash
 # Recarregar systemd
 systemctl daemon-reload
@@ -172,9 +175,12 @@ kubectl get pods -n kube-system
 
 **IMPORTANTE:** Os mesmos arquivos (rke2.linux-amd64.tar.gz e sha256sum-amd64.txt) são usados para atualizar os workers.
 
-
 ### Opção 1: Download direto no servidor
 
+Listar versões disponíveis do RKE2
+
+```bash
+curl -s https://api.github.com/repos/rancher/rke2/releases | grep 'tag_name' | cut -d\" -f4 | sort -V | grep -v 'rc'
 ```bash
 # Definir a versão desejada
 VERSION="v1.32.11+rke2r1"

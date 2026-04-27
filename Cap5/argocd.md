@@ -378,6 +378,21 @@ Forçar restart:
 kubectl rollout restart deployment argocd-server -n argocd
 ```
 
+
+Após a criação do argocdCD é necessário criar as permissões no projeto.
+
+em CLuster Resources Allow List
+adicionar:
+
+|        Kind        |           Group           |     Name     |
+| :----------------: | :-----------------------: | :----------: |
+|     Namespace      |             *             |    argocd    |
+|     Namespace      |             *             | istio-system |
+|     Namespace      |             *             | <namespace>  |
+| ClusterRoleBinding | rbac.authorization.k8s.io |
+|    ClusterRole     | rbac.authorization.k8s.io |
+
+
 ---
 
 ## Referências

@@ -50,7 +50,7 @@ kubectl get secret -n argocd tls-tatulab
 helm install traefik traefik/traefik \
   --namespace argocd \
   --set service.type=LoadBalancer \
-  --set service.loadBalancerIP=192.168.1.70 \
+  --set service.loadBalancerIP=<IP> \  # ex: 192.168.1.71
   --set deployment.replicas=2 \
   --set ingressClass.enabled=true \
   --set ingressClass.isDefaultClass=false
@@ -63,7 +63,7 @@ kubectl get pods -n argocd | grep traefik
 kubectl get svc -n argocd traefik
 ```
 
-**O LoadBalancer deve mostrar o EXTERNAL-IP: 192.168.1.70**
+**O LoadBalancer deve mostrar o EXTERNAL-IP configurado (ex: 192.168.1.71)**
 
 ---
 
@@ -78,6 +78,13 @@ Deve listar vários CRDs incluindo `ingressroutes.traefik.io`
 ---
 
 ## 6. Instalar ArgoCD via Helm
+
+Adicionar o repositóio
+
+```bash
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
+```
 
 ```bash
 helm install argocd argo/argo-cd --namespace argocd
@@ -131,7 +138,7 @@ spec:
     - websecure
   routes:
     - kind: Rule
-      match: Host(\`argocd.tatulab.com.br\`)
+      match: Host(`argocd.tatulab.com.br`)
       services:
         - name: argocd-server
           port: 80
@@ -157,7 +164,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 
 **Credenciais de acesso:**
 
-- **URL:** https://argo.tatulab.com.br
+- **URL:** https://argocd.tatulab.com.br
 - **Usuário:** admin
 - **Senha:** (resultado do comando acima)
 
@@ -165,7 +172,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 
 ## 10. Acessar o ArgoCD
 
-Abra o navegador e acesse: **https://argo.tatulab.com.br**
+Abra o navegador e acesse: **https://argocd.tatulab.com.br**
 
 ---
 
@@ -192,8 +199,8 @@ kubectl get svc -n argocd
 ### Testar conectividade DNS
 
 ```bash
-ping argo.tatulab.com.br
-curl -I https://argo.tatulab.com.br
+ping argocd.tatulab.com.br
+curl -I https://argocd.tatulab.com.br
 ```
 
 ### Verificar configuração do MetalLB
@@ -202,7 +209,7 @@ curl -I https://argo.tatulab.com.br
 kubectl get ipaddresspool -A
 ```
 
-O IP 192.168.1.70 deve estar no range configurado.
+O IP do LoadBalancer (ex: 192.168.1.71) deve estar no range configurado.
 
 ---
 
@@ -211,7 +218,7 @@ O IP 192.168.1.70 deve estar no range configurado.
 ```bash
 Internet/Browser
     ↓
-https://argo.tatulab.com.br (192.168.1.70)
+https://argocd.tatulab.com.br (ex: 192.168.1.71)
     ↓
 [Traefik LoadBalancer] (porta 443 - TLS)
     ↓
@@ -228,9 +235,9 @@ https://argo.tatulab.com.br (192.168.1.70)
 
 1. **Traefik termina o TLS** (porta 443 externa com certificado tls-tatulab)
 2. **ArgoCD roda em modo insecure** (porta 80 interna, sem TLS)
-3. **MetalLB** atribui o IP 192.168.1.70 ao LoadBalancer do Traefik
+3. **MetalLB** atribui o IP do LoadBalancer ao Traefik (ex: 192.168.1.71)
 4. **IngressRoute** faz o roteamento baseado no hostname
-5. **DNS** deve apontar argo.tatulab.com.br para 192.168.1.70
+5. **DNS** deve apontar argocd.tatulab.com.br para o IP do LoadBalancer
 
 ---
 

@@ -87,7 +87,7 @@ data:
 
     exporters:
       otlp/jaeger:
-        endpoint: <JAEGER_ENDPOINT>
+        endpoint: jaeger.<NAMESPACE>.svc.cluster.local:4317
         tls:
           insecure: true
       prometheus:
@@ -201,7 +201,7 @@ spec:
     spec:
       containers:
         - name: otel-collector
-          image: otel/opentelemetry-collector-contrib:0.146.0 # verifique a versão mais recente
+          image: otel/opentelemetry-collector-contrib:0.150.1 # verifique a versão mais recente
           args:
             - --config=/etc/otelcol/config.yaml
           ports:

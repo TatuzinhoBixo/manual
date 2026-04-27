@@ -197,6 +197,7 @@ metadata:
 spec:
   type: LoadBalancer
   loadBalancerIP: <IP_INGRESS_GATEWAY>
+  externalTrafficPolicy: Local
   selector:
     app: wordpress-ingressgateway
     istio: ingressgateway
