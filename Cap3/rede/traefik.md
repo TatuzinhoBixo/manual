@@ -131,11 +131,52 @@ kubectl get crd | grep traefik
 
 ## Etapa 4: Expor uma Aplicação
 
-### Opção A — IngressRoute (CRD nativo do Traefik)
+A exposição é feita pelo CRD `IngressRoute` do Traefik, que casa um host (`Host(...)`) e um entrypoint (`web`/`websecure`) com um Service Kubernetes, opcionalmente passando por `Middleware`s.
 
-Recomendado: mais recursos que o `Ingress` padrão (middlewares, TLS avançado, TCP, etc.).
+Os manifestos completos estão na **Etapa 5**, já combinados com cada middleware (`kubectl apply -f` único). Se não precisar de middleware, basta usar a mesma estrutura sem o campo `middlewares`.
+
+> Para portabilidade entre Ingress Controllers (NGINX, ALB, etc.), veja a alternativa com `Ingress` padrão no fim deste documento.
+
+---
+
+## Etapa 5: Middlewares
+
+Transformam requisições antes de chegar ao backend. Cada exemplo abaixo é um manifesto único (`kubectl apply -f`) com o `Middleware` e a `IngressRoute` que o referencia.
+
+### Redirect HTTP → HTTPS
+
+O redirect tem que ser aplicado na `IngressRoute` que escuta no entrypoint `web` (porta 80). A `IngressRoute` que serve o tráfego real fica em `websecure` (porta 443) **sem** o middleware. Os três recursos vão num único arquivo:
 
 ```yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: <NAMESPACE>
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+# Captura HTTP (porta 80) e redireciona para HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: <NOME_SERVICO>-http
+  namespace: <NAMESPACE>
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`<DOMINIO>`)
+      middlewares:
+        - name: redirect-https
+      services:
+        - name: <NOME_SERVICO>
+          port: <PORTA_SERVICO>
+---
+# Serve a aplicação em HTTPS (porta 443)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -154,73 +195,9 @@ spec:
     secretName: <NOME_SECRET_TLS>
 ```
 
-### Opção B — Ingress padrão do Kubernetes
-
-Compatível com qualquer Ingress Controller. Utilize quando precisar de portabilidade.
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: <NOME_SERVICO>
-  namespace: <NAMESPACE>
-  annotations:
-    kubernetes.io/ingress.class: <INGRESS_CLASS>
-spec:
-  tls:
-    - hosts:
-        - <DOMINIO>
-      secretName: <NOME_SECRET_TLS>
-  rules:
-    - host: <DOMINIO>
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: <NOME_SERVICO>
-                port:
-                  number: <PORTA_SERVICO>
-```
-
----
-
-## Etapa 5: Usar Middlewares
-
-Middlewares são aplicados às rotas para transformar requisições antes de chegarem ao backend.
-
-### Redirect HTTP → HTTPS
-
-```yaml
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: redirect-https
-  namespace: <NAMESPACE>
-spec:
-  redirectScheme:
-    scheme: https
-    permanent: true
-```
-
-Aplique o middleware na `IngressRoute`:
-
-```yaml
-routes:
-  - kind: Rule
-    match: Host(`<DOMINIO>`)
-    middlewares:
-      - name: redirect-https
-    services:
-      - name: <NOME_SERVICO>
-        port: <PORTA_SERVICO>
-```
-
 ### Basic Auth
 
 ```bash
-# Gerar o arquivo htpasswd (usuário:senha bcrypt)
 htpasswd -nb usuario senha | openssl base64
 ```
 
@@ -232,7 +209,7 @@ metadata:
   namespace: <NAMESPACE>
 type: Opaque
 data:
-  users: <HASH_BASE64_GERADO_ACIMA>
+  users: <HASH_BASE64>
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -242,6 +219,25 @@ metadata:
 spec:
   basicAuth:
     secret: basic-auth-secret
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: <NOME_SERVICO>
+  namespace: <NAMESPACE>
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`<DOMINIO>`)
+      middlewares:
+        - name: basic-auth
+      services:
+        - name: <NOME_SERVICO>
+          port: <PORTA_SERVICO>
+  tls:
+    secretName: <NOME_SECRET_TLS>
 ```
 
 ### Strip Prefix (útil para subpaths)
@@ -317,6 +313,37 @@ kubectl get ingress -A
 # Acessar o dashboard do Traefik via port-forward
 kubectl port-forward -n <NAMESPACE> svc/<NOME_RELEASE> 8080:8080
 # Acesse: http://localhost:8080/dashboard/
+```
+
+---
+
+## Alternativa: Ingress padrão do Kubernetes
+
+Use quando precisar do mesmo manifesto rodando em outros Ingress Controllers (NGINX, ALB, etc.). Não suporta `Middleware` diretamente — para usar middlewares Traefik num `Ingress` padrão é preciso a annotation `traefik.ingress.kubernetes.io/router.middlewares: <NAMESPACE>-<NOME>@kubernetescrd`.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: <NOME_SERVICO>
+  namespace: <NAMESPACE>
+  annotations:
+    kubernetes.io/ingress.class: <INGRESS_CLASS>
+spec:
+  tls:
+    - hosts: [<DOMINIO>]
+      secretName: <NOME_SECRET_TLS>
+  rules:
+    - host: <DOMINIO>
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: <NOME_SERVICO>
+                port:
+                  number: <PORTA_SERVICO>
 ```
 
 ---
