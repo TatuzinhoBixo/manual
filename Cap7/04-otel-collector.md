@@ -252,7 +252,66 @@ kubectl apply -f otel-collector-deployment.yaml
 
 ---
 
-### 5. Configurar instrumentação nas aplicações
+### 5. Criar o ServiceMonitor para coletar as métricas SPM
+
+O OTel Collector usa o **spanmetrics connector** para gerar métricas RED (`traces_span_metrics_*`) a partir dos spans recebidos, e expõe essas métricas via porta `8889` (`http-prometheus`). Sem um `ServiceMonitor`, o Prometheus **não scrapeia** essa porta e:
+
+- A aba **Monitor (SPM)** do Jaeger fica vazia (Jaeger lê `traces_span_metrics.*` do Prometheus)
+- Métricas existem no Collector mas não chegam ao Prometheus
+
+```yaml
+# otel-collector-servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector
+  namespace: <NAMESPACE>
+  labels:
+    app: otel-collector
+spec:
+  selector:
+    matchLabels:
+      app: otel-collector          # deve casar com os labels do Service criado no passo 2
+  namespaceSelector:
+    matchNames:
+      - <NAMESPACE>
+  endpoints:
+    - port: http-prometheus        # nome da porta 8889 no Service (não usar número)
+      path: /metrics
+      interval: 15s                # alinhe com spanmetrics.metrics_flush_interval do ConfigMap
+```
+
+```bash
+kubectl apply -f otel-collector-servicemonitor.yaml
+```
+
+> **Atenção ao label do Prometheus Operator:** se o seu Prometheus tem `serviceMonitorSelector` filtrado (ex: `release: kube-prometheus-stack`), adicione esse label em `metadata.labels` do ServiceMonitor. Para confirmar:
+>
+> ```bash
+> kubectl -n <NAMESPACE> get prometheus -o jsonpath='{.items[0].spec.serviceMonitorSelector}'; echo
+> ```
+>
+> Se retornar `{}`, qualquer label serve.
+
+#### Validação
+
+```bash
+# 1. Target do Prometheus deve aparecer como "up"
+kubectl run -n <NAMESPACE> --rm -i --restart=Never q --image=curlimages/curl --command -- \
+  curl -s 'http://<PROMETHEUS_SVC>.<NAMESPACE>.svc.cluster.local:9090/api/v1/targets?scrapePool=serviceMonitor%2F<NAMESPACE>%2Fotel-collector%2F0' \
+  | grep -oE '"health":"[^"]*"' | head -1
+
+# 2. Métricas devem aparecer no Prometheus (esperado: count > 0)
+kubectl run -n <NAMESPACE> --rm -i --restart=Never q --image=curlimages/curl --command -- \
+  curl -s --data-urlencode 'query=count({__name__=~"traces_span_metrics.*"})' \
+  'http://<PROMETHEUS_SVC>.<NAMESPACE>.svc.cluster.local:9090/api/v1/query'
+```
+
+Quando o `count` retornar > 0, abra o Jaeger UI → aba **Monitor** → escolha um serviço → janela "Last 1 hour" → os gráficos de Latency / Error rate / Request rate devem popular.
+
+---
+
+### 6. Configurar instrumentação nas aplicações
 
 Para que as aplicações enviem traces ao OTel Collector, configure o endpoint OTLP no SDK:
 
@@ -339,18 +398,44 @@ kubectl logs -n <NAMESPACE> -l app=otel-collector | grep -i "receiver\|otlp\|err
 
 ### Métricas SPM não aparecem no Prometheus
 
-Verificar se o endpoint Prometheus do Collector responde:
+Sintoma: aba **Monitor** do Jaeger vazia, ou query `count({__name__=~"traces_span_metrics.*"})` no Prometheus retorna `[]`.
+
+**Diagnóstico em 3 etapas** (o problema pode estar em qualquer uma):
+
+#### 1. Métricas existem no Collector?
 
 ```bash
-kubectl port-forward -n <NAMESPACE> svc/otel-collector 8889:8889
-curl http://localhost:8889/metrics | grep traces_span_metrics
+kubectl run -n <NAMESPACE> --rm -i --restart=Never q --image=curlimages/curl --command -- \
+  curl -s http://otel-collector.<NAMESPACE>.svc.cluster.local:8889/metrics | grep -c '^traces_span_metrics'
 ```
 
-Se não houver métricas, verificar se o pipeline `metrics/spanmetrics` está ativo:
+Se retornar `0`:
+- Nenhum trace está chegando ao Collector → revisar pipeline de tracing (Telemetry no Istio, ver `Cap7/06-istio-meshconfig.md` e `Cap7/03-jaeger.md`)
+- Pipeline `metrics/spanmetrics` não está ativo no ConfigMap → conferir com:
+  ```bash
+  kubectl logs -n <NAMESPACE> -l app=otel-collector | grep -i "spanmetrics\|pipeline"
+  ```
+
+Se retornar > 0, ir para o passo 2.
+
+#### 2. Prometheus tem `ServiceMonitor` para o Collector?
 
 ```bash
-kubectl logs -n <NAMESPACE> -l app=otel-collector | grep -i "spanmetrics\|pipeline"
+kubectl get servicemonitor -A | grep otel
 ```
+
+Se não retornar nada, **falta o ServiceMonitor** — criar conforme passo 5 deste documento.
+
+#### 3. Target está `up` no Prometheus?
+
+```bash
+kubectl run -n <NAMESPACE> --rm -i --restart=Never q --image=curlimages/curl --command -- \
+  curl -s 'http://<PROMETHEUS_SVC>.<NAMESPACE>.svc.cluster.local:9090/api/v1/targets?scrapePool=serviceMonitor%2F<NAMESPACE>%2Fotel-collector%2F0' \
+  | grep -oE '"health":"[^"]*"|"lastError":"[^"]{0,100}'
+```
+
+Se aparecer `health:"down"` com erro de conexão/404 → conferir nome da porta no ServiceMonitor (deve ser `http-prometheus`, não número 8889).
+Se aparecer `health:"up"` mas mesmo assim não há métricas no Prometheus → aguardar 30s (próximo ciclo de scrape) e re-executar a query.
 
 ---
 

@@ -1,5 +1,36 @@
 # Kiali — Stack de Observabilidade Kubernetes
 
+## 🧭 Onde este tutorial entra na stack
+
+O Kiali tem **três funcionalidades principais** que dependem de fontes de dados diferentes. Saber quem alimenta o quê evita travar nos próximos passos:
+
+| Aba do Kiali              | Fonte dos dados                                  | Pré-requisito                                                                  |
+| ------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------ |
+| **Overview / Mesh / Apps** | API do Kubernetes                                | Sidecars injetados nos namespaces alvos (`istio-injection=enabled`)            |
+| **Traffic Graph**         | Métricas `istio_requests_total` no Prometheus    | Telemetry de **métricas** + PodMonitor (este tutorial — **Apêndice A**)        |
+| **Traces (integração)**   | Jaeger UI (`internal_url` no ConfigMap)          | Pipeline de tracing completo (`Cap7/06-istio-meshconfig.md` + `04-otel-collector.md`) |
+
+```
+                    ┌─────────────────────────────────────────────┐
+                    │        Kiali UI (este tutorial)             │
+                    └────────┬───────────┬─────────────────┬──────┘
+                             │           │                 │
+                       Mesh/Apps    Traffic Graph         Traces
+                             │           │                 │
+                             ▼           ▼                 ▼
+                       Kubernetes  Prometheus          Jaeger UI
+                          API     (istio_requests_total)   ▲
+                                          ▲                │
+                              ┌───────────┘                │
+                              │                            │
+                       PodMonitor envoy-stats        Pipeline tracing
+                       (Apêndice A deste arquivo)    (Cap7/04 + 06)
+```
+
+**Ordem recomendada:** `01` → `02` → `03` → `04` → `05` (este) → `06`. Quando este tutorial terminar, o Kiali estará rodando — mas as abas Traffic Graph e Traces só populam depois que `06-istio-meshconfig.md` for aplicado.
+
+---
+
 ## Descrição Geral
 
 O Kiali é o console de observabilidade do Istio service mesh. Ele fornece visualização do tráfego entre serviços, topologia de malha, validação de configurações Istio e integração com Grafana, Prometheus e Jaeger.
@@ -718,13 +749,23 @@ O Traffic Graph e os indicadores RED (Rate, Errors, Duration) do Kiali dependem 
 
 ### A.1 Habilitar geração de métricas nos sidecars (Telemetry)
 
+> **⚠️ Não confundir com o `Telemetry` de tracing.** O recurso `Telemetry` da API do Istio cobre **três coisas distintas** (`metrics`, `tracing`, `accessLogging`), e cada bloco é configurado separadamente. Neste apêndice tratamos apenas de **métricas Prometheus** (RED — Rate/Errors/Duration — usadas pelo Kiali Graph).
+>
+> | Tipo de telemetria | Onde está documentado                       | Campo no spec        | Amostragem? |
+> | ------------------ | ------------------------------------------- | -------------------- | ----------- |
+> | **Métricas** (Prometheus / Kiali Graph) | **Este apêndice** — `Cap7/05-kiali.md`   | `spec.metrics`       | Não — 100% sempre |
+> | **Traces** (Jaeger via OTel)            | `Cap7/06-istio-meshconfig.md`            | `spec.tracing`       | Sim — `randomSamplingPercentage` |
+> | **Access logs**                          | (não usado neste manual)                 | `spec.accessLogging` | Não         |
+>
+> Os dois recursos `Telemetry` (este e o de tracing) **coexistem no cluster** — não substituem um ao outro. Você pode aplicar ambos com nomes diferentes (ex: `enable-prometheus-stats` para métricas e `tracing` para traces) no mesmo ou em namespaces distintos.
+
 ```yaml
 # istio-telemetry-prometheus.yaml
 apiVersion: telemetry.istio.io/v1
 kind: Telemetry
 metadata:
   name: enable-prometheus-stats
-  namespace: istio-system
+  namespace: istio-system          # istio-system = vale pra todo o mesh; troque por um ns específico para escopo restrito
 spec:
   metrics:
     - providers:

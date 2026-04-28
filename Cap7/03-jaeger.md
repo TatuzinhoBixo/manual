@@ -1,5 +1,28 @@
 # Jaeger — Stack de Observabilidade Kubernetes
 
+## 🧭 Onde este tutorial entra na stack
+
+O Jaeger sozinho **não funciona** — ele é só o backend que armazena/visualiza traces. Pra a UI mostrar serviços além do próprio `jaeger`, é preciso completar o pipeline em **outros 2 tutoriais** depois deste:
+
+```
+[03-jaeger.md]  ← VOCÊ ESTÁ AQUI (backend de traces + UI)
+       │
+       │  precisa ser alimentado por
+       ▼
+[04-otel-collector.md]  ← recebe spans das apps e encaminha pro Jaeger
+       │
+       │  precisa ser alimentado por
+       ▼
+[06-istio-meshconfig.md]  ← faz os sidecars Istio gerarem e enviarem spans
+                              + ajusta PILOT_TRACE_SAMPLING (ver Cap1/Kubernets/8-istio.md)
+```
+
+**Ordem recomendada de execução:** `03` (este) → `04` → `05` → `06`. Só depois do `06` aplicado é que a UI do Jaeger lista serviços de aplicações reais.
+
+> **Se ao final você só ver o serviço `jaeger` no dropdown da UI**, vá direto para a seção **"Jaeger só mostra o serviço `jaeger` no dropdown"** no Troubleshooting deste arquivo — é o sintoma mais comum quando o pipeline a montante não está configurado.
+
+---
+
 ## Descrição Geral
 
 O Jaeger é o sistema de rastreamento distribuído (distributed tracing) da stack de observabilidade. Esta implantação usa o **Jaeger v2**, baseado no OpenTelemetry Collector, com backend de armazenamento no **Elasticsearch**.
@@ -712,6 +735,123 @@ Se o Jaeger começar a enviar seus próprios traces para si mesmo, verificar se 
 ```bash
 kubectl get pod -n <NAMESPACE> -l app=jaeger -o jsonpath='{.items[0].metadata.annotations}'
 ```
+
+---
+
+### Jaeger só mostra o serviço `jaeger` no dropdown "Service" (UI vazia)
+
+Sintoma: o Jaeger sobe normalmente, mas no dropdown **Service** da tela "Search" só aparece o próprio `jaeger` (nenhum dos seus apps com sidecar). Significa que **nenhum trace de aplicação está chegando** ao Jaeger.
+
+Esse é um problema do **pipeline de tracing antes do Jaeger** (App → sidecar → OTel Collector → Jaeger). O Jaeger está OK; o problema é que ninguém está mandando span para ele.
+
+Diagnóstico em **três pontos**, na ordem em que costumam falhar:
+
+#### 1. MeshConfig com placeholders literais (`<OTEL_SERVICE>`, `<OTEL_PORT>`)
+
+```bash
+kubectl -n istio-system get cm istio -o jsonpath='{.data.mesh}' | grep -A3 "otel-tracing"
+```
+
+Esperado:
+
+```yaml
+- name: otel-tracing
+  opentelemetry:
+    service: otel-collector.<NAMESPACE>.svc.cluster.local
+    port: 4317
+```
+
+Se aparecer `service: <OTEL_SERVICE>` ou `port: <OTEL_PORT>` literais → o tutorial `06-istio-meshconfig.md` foi aplicado sem substituir os placeholders. Editar o ConfigMap (ver `Cap7/06-istio-meshconfig.md`, passo 2) e em seguida:
+
+```bash
+kubectl -n istio-system rollout restart deploy istiod
+```
+
+#### 2. Falta o recurso `Telemetry` para tracing
+
+```bash
+kubectl get telemetry -A
+```
+
+Para o tracing funcionar, é preciso pelo menos **um** `Telemetry` com `spec.tracing` (não confundir com `spec.metrics`). O recurso é criado em `Cap7/06-istio-meshconfig.md`, passo 4.
+
+> **Nota:** o `Telemetry` chamado `enable-prometheus-stats` (criado em `Cap7/05-kiali.md`, Apêndice A.1) é apenas para **métricas Prometheus** — ele **não** habilita tracing. São dois recursos distintos que coexistem no cluster.
+
+> **⚠️ Em Istio instalado via Helm `minimal`:** se houver `Telemetry` apenas em `istio-system` e mesmo assim os spans não chegarem (sintoma: `kubectl -n monitor exec deploy/jaeger -c jaeger -- wget -qO- http://localhost:8888/metrics | grep otelcol_receiver_accepted_spans_total` não incrementa após gerar tráfego), **crie também um `Telemetry` no namespace do app**. Ver detalhes em `Cap7/06-istio-meshconfig.md`, passo 4.
+
+#### 3. `PILOT_TRACE_SAMPLING=1` (default do chart Istio) limitando o sampling a 1%
+
+Sintoma típico: nos sidecars, o `random_sampling` aparece como `1` em vez do valor configurado no `Telemetry`.
+
+```bash
+# Ver o valor efetivo no istiod
+kubectl -n istio-system get deploy istiod -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PILOT_TRACE_SAMPLING")].value}'; echo
+
+# Ver o sampling efetivo num sidecar
+WP_POD=$(kubectl -n <APP_NS> get pod -l app=<APP_LABEL> -o jsonpath='{.items[0].metadata.name}')
+kubectl -n <APP_NS> exec $WP_POD -c istio-proxy -- pilot-agent request GET 'config_dump' \
+  | grep -A3 '"random_sampling"' | head -5
+```
+
+Se o valor for `1` mesmo com `Telemetry` configurando `randomSamplingPercentage: 100`, é o env do istiod sobrepondo. Para resolver, ver `Cap1/Kubernets/8-istio.md`, seção B.5 (bloco `pilot.traceSampling`).
+
+#### Validação fim a fim
+
+Após aplicar as três correções acima e reiniciar os apps com sidecar (`kubectl -n <APP_NS> rollout restart deploy <APP_DEPLOY>`), gerar tráfego e validar:
+
+```bash
+# Gerar tráfego
+kubectl run -n <APP_NS> --rm -i --restart=Never gen --image=curlimages/curl --command -- \
+  sh -c 'for i in $(seq 1 50); do curl -s -o /dev/null http://<APP_SVC>.<APP_NS>.svc.cluster.local; done'
+
+# Listar serviços conhecidos pelo Jaeger
+kubectl run -n <NAMESPACE> --rm -i --restart=Never q --image=curlimages/curl --command -- \
+  curl -s 'http://jaeger.<NAMESPACE>.svc.cluster.local:16686/api/services'
+```
+
+A resposta deve trazer mais de `["jaeger"]` — algo como `["jaeger", "<app>.<ns>", "<gateway>.<ns>", ...]`.
+
+---
+
+### Aba "System Architecture" do Jaeger vazia (DAG não gerado)
+
+Sintoma: a aba **System Architecture** mostra "No data available" mesmo com traces fluindo normalmente nas outras abas (Search, Monitor).
+
+Causa: o DAG de dependências entre serviços **não é calculado em tempo real** pelo Jaeger. Ele lê o índice `jaeger-dependencies-*` do Elasticsearch, que precisa ser populado periodicamente por um job batch externo (`jaegertracing/spark-dependencies` ou variantes).
+
+#### ⚠️ Limitação conhecida com Elasticsearch 8.x / 9.x
+
+A imagem oficial **`jaegertracing/spark-dependencies`** usa o cliente `elasticsearch-hadoop`, que oficialmente suporta apenas Elasticsearch até **7.x**. Em ES 8+ ou 9+, o job falha logo no início com:
+
+```
+EsHadoopIllegalArgumentException: Unsupported/Unknown Elasticsearch version [9.x.x].
+Highest supported version is [7.x]. You may need to upgrade ES-Hadoop.
+```
+
+Como esta stack usa Elasticsearch 9.x (definido em `Parte 1 — Elasticsearch`), o job spark-dependencies **não funciona**, e atualmente não há imagem oficial atualizada do projeto Jaeger compatível com ES 8/9.
+
+#### Status e workaround recomendado
+
+**Atualmente não há solução oficial.** Acompanhamento do upstream: <https://github.com/jaegertracing/spark-dependencies/issues>
+
+**Workaround recomendado: usar o Kiali Traffic Graph.** Para fins operacionais (visualizar quem chama quem, taxa de requests, taxa de erro), o **Traffic Graph do Kiali** entrega informação equivalente — e funciona em tempo real, sem depender de job batch:
+
+| Recurso                             | Jaeger System Architecture                 | Kiali Traffic Graph                              |
+| ----------------------------------- | ------------------------------------------ | ------------------------------------------------ |
+| Fonte                               | Índice `jaeger-dependencies-*` (batch)     | `istio_requests_total` no Prometheus (live)      |
+| Janela                              | Histórica (calculada periodicamente)       | Últimos N minutos/horas                          |
+| Métricas RED                        | Não                                        | Sim (Rate, Errors, Duration)                     |
+| Funciona com ES 9.x                 | ❌ (limitação descrita acima)              | ✅                                                |
+
+**Configuração do Kiali Traffic Graph:** ver `Cap7/05-kiali.md`, Apêndice A (Telemetry de métricas + PodMonitor envoy-stats).
+
+#### Alternativas (não recomendadas neste manual)
+
+- **Build customizado** do `spark-dependencies` com cliente ES atualizado — alto custo de manutenção
+- **Subir ES 7.x paralelo** apenas para o índice de dependências — Frankenstein operacional
+- **Migrar backend de traces para Cassandra** — esforço grande, perde benefícios do ES (aggregations, kibana)
+
+A recomendação é manter o foco no Kiali Traffic Graph e considerar o System Architecture do Jaeger como uma feature futura, dependente de release upstream do `spark-dependencies` com suporte a ES 8+.
 
 ---
 

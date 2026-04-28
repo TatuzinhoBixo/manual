@@ -269,8 +269,37 @@ helm install istio-cni istio/cni \
 ```bash
 helm install istiod istio/istiod \
   -n istio-system \
-  --set pilot.cni.enabled=true
+  --set pilot.cni.enabled=true \
+  --set pilot.traceSampling=100        # opcional: ver bloco abaixo
 ```
+
+> **⚠️ Sobre `pilot.traceSampling`** — define o percentual **global** de amostragem de traces do mesh (env `PILOT_TRACE_SAMPLING` no istiod). O default do chart é **`1` (1%)**, valor adequado para produção mas que faz a maioria dos traces nunca chegar ao Jaeger em ambientes de aprendizado.
+>
+> | Cenário                    | Valor recomendado | Observação                                                                              |
+> | -------------------------- | ----------------- | --------------------------------------------------------------------------------------- |
+> | Dev / homologação / aprendizado | `100`         | Captura todos os traces — recomendado neste manual                                       |
+> | Produção (volume alto)     | `1` (default)     | Só 1% dos requests viram trace — reduz overhead e custo de armazenamento                  |
+> | Produção mista             | Manter default `1` | Sobrepor por namespace via `Telemetry` (ver `Cap7/06-istio-meshconfig.md`, passo 4)      |
+>
+> **Para alterar depois da instalação** (sem reinstalar):
+>
+> ```bash
+> # Forma persistente (sobrevive a helm upgrade):
+> helm upgrade istiod istio/istiod -n istio-system \
+>   --reuse-values --set pilot.traceSampling=100
+>
+> # Forma efêmera (volta para o default no próximo helm upgrade):
+> kubectl -n istio-system set env deploy/istiod PILOT_TRACE_SAMPLING=100
+>
+> # Em ambos os casos, reiniciar os pods com sidecar para o novo bootstrap:
+> kubectl -n <APP_NS> rollout restart deploy <APP_DEPLOY>
+> ```
+>
+> **Como verificar o valor efetivo**:
+>
+> ```bash
+> kubectl -n istio-system get deploy istiod -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PILOT_TRACE_SAMPLING")].value}'; echo
+> ```
 
 #### B.6 Verificar instalação via Helm
 

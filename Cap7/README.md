@@ -260,6 +260,101 @@ Acessar as UIs:
 
 ---
 
+## ⚠️ Pegadinhas comuns (leia antes de começar)
+
+Bugs/desencontros que costumam acontecer ao seguir os tutoriais pela primeira vez. Cada um tem um link pro arquivo onde está o detalhe e o fix.
+
+### 1. Placeholders literais não substituídos
+
+Vários YAMLs têm `<NAMESPACE>`, `<DOMAIN>`, `<OTEL_SERVICE>`, `<PROMETHEUS_URL>` etc. **Substituir antes de aplicar** — alguns desses placeholders, se aplicados literais, fazem o componente subir aparentemente OK mas sem funcionar.
+
+Verificação rápida ao final de cada tutorial:
+
+```bash
+# Procurar qualquer ocorrência de "<...>" literal nos manifestos aplicados
+kubectl -n <NAMESPACE> get cm,svc,virtualservice,destinationrule -o yaml | grep -E '<[A-Z_]+>'
+kubectl -n istio-system get cm istio -o jsonpath='{.data.mesh}' | grep -E '<[A-Z_]+>'
+```
+
+Não deve retornar nada.
+
+### 2. Kiali Traffic Graph vazio
+
+Sintoma: Kiali abre, namespaces aparecem, mas o **Traffic Graph** mostra "no graph available".
+
+Causa: Prometheus não está coletando `istio_requests_total` dos sidecars Envoy. Solução: criar `Telemetry` (métricas) + `PodMonitor envoy-stats-monitor` + `ServiceMonitor istiod-monitor`.
+
+📍 Ver **`05-kiali.md` → Apêndice A** (instruções completas + comandos de validação).
+
+### 3. Jaeger só mostra o serviço `jaeger`
+
+Sintoma: dropdown "Service" do Jaeger só lista o próprio `jaeger`. Nenhum app aparece.
+
+Causas (pode ser uma ou várias em sequência):
+1. Placeholders `<OTEL_SERVICE>` / `<OTEL_PORT>` no MeshConfig do Istio (`06-istio-meshconfig.md`, passo 2)
+2. Falta o recurso `Telemetry` com `spec.tracing` (`06-istio-meshconfig.md`, passo 4)
+3. `PILOT_TRACE_SAMPLING=1` no istiod sobrepondo o `Telemetry` (`Cap1/Kubernets/8-istio.md`, seção B.5)
+4. **Istio Helm `minimal`**: `Telemetry` em `istio-system` sozinho não destrava o provider OTel — criar também no namespace do app (`06-istio-meshconfig.md`, passo 4, observação destacada)
+
+📍 Ver **`03-jaeger.md` → Troubleshooting → "Jaeger só mostra o serviço `jaeger`"** (diagnóstico passo a passo).
+
+### 4. Aba Monitor (SPM) do Jaeger vazia
+
+Sintoma: aba **Monitor** do Jaeger não popula gráficos de Latency/Errors/Rate.
+
+Causa: falta `ServiceMonitor` para o OTel Collector — sem ele, o Prometheus não scrapeia as `traces_span_metrics_*` da porta 8889 do Collector.
+
+📍 Ver **`04-otel-collector.md` → passo 5** (ServiceMonitor) e **Troubleshooting → "Métricas SPM não aparecem no Prometheus"**.
+
+### 5. Kiali UI fica em loading eterno após login
+
+Sintoma: login passa, mas a UI nunca carrega completamente.
+
+Causa: faltam permissões `gatewayclasses` / `backendtlspolicies` no `ClusterRole` do Kiali. Sem elas, o cache entra em loop "Shutting down cache" e a API trava.
+
+📍 Ver **`05-kiali.md` → Troubleshooting → "UI fica em loading eterno após login"**.
+
+### 6. Kiali em CrashLoopBackOff por causa do `signing-key`
+
+Sintoma: pod do Kiali não sobe, log mostra `invalid configuration: signing key for sessions must be 16, 24 or 32 bytes length`.
+
+Causa: `signing-key` no Secret está com tamanho diferente de 16/24/32 chars (ex: `openssl rand -base64 32` produz **44** chars, que é inválido).
+
+📍 Ver **`05-kiali.md` → seção 1.2** (use `openssl rand -hex 16` que dá 32 chars).
+
+### 7. Aba "System Architecture" do Jaeger vazia (limitação conhecida)
+
+Sintoma: aba **System Architecture** do Jaeger mostra "No data available" mesmo com tracing funcionando nas outras abas.
+
+Causa: o DAG depende de um job batch (`spark-dependencies`) que **não tem imagem oficial compatível com ES 8.x/9.x**. Como esta stack usa ES 9.x, a feature não está disponível.
+
+**Workaround:** usar o **Kiali Traffic Graph** (`Cap7/05-kiali.md`) — entrega informação equivalente em tempo real, sem depender de job batch.
+
+📍 Detalhes em **`03-jaeger.md` → Troubleshooting → "Aba System Architecture do Jaeger vazia"**.
+
+---
+
+### 8. Validação fim a fim do pipeline de tracing
+
+Após aplicar `06-istio-meshconfig.md` e reiniciar os apps com sidecar, validar:
+
+```bash
+# 1. Sidecar de um app está com sampling correto (não 1)
+APP_POD=$(kubectl -n <APP_NS> get pod -l app=<APP> -o jsonpath='{.items[0].metadata.name}')
+kubectl -n <APP_NS> exec $APP_POD -c istio-proxy -- pilot-agent request GET 'config_dump' \
+  | grep -A2 '"random_sampling"' | head -5
+
+# 2. Jaeger conhece serviços além de "jaeger"
+kubectl -n <NAMESPACE> exec deploy/jaeger -c jaeger -- \
+  curl -s http://localhost:16686/api/services
+
+# 3. SPM no Prometheus (count > 0)
+kubectl -n <NAMESPACE> exec sts/prometheus-prometheus -c prometheus -- \
+  wget -qO- 'http://localhost:9090/api/v1/query?query=count({__name__=~"traces_span_metrics.*"})'
+```
+
+---
+
 ## Arquivos legados (`*_LEGADO.md`)
 
 Estes arquivos documentam a antiga abordagem manual (Deployment puro, sem Operator). Foram substituídos pelo `01-kube-prometheus-stack.md`. **Não usar em produção.**
