@@ -171,6 +171,14 @@ tls-san:
   - <IP_HAPROXY>
   - <DNS_CLUSTER>
 node-external-ip: <IP_CONTROLPLANE>
+kube-controller-manager-arg:
+  - "bind-address=0.0.0.0"
+kube-scheduler-arg:
+  - "bind-address=0.0.0.0"
+kube-proxy-arg:
+  - "metrics-bind-address=0.0.0.0"
+etcd-arg:
+  - "listen-metrics-urls=http://0.0.0.0:2381"
 ```
 
 ### 3.3 Atualizar HAProxy
@@ -252,6 +260,8 @@ Edite o arquivo `/etc/rancher/rke2/config.yaml`:
 ```yaml
 server: https://<HAPROXY_IP>:9345
 token: <mesmo token do control1>
+kube-proxy-arg:
+  - "metrics-bind-address=0.0.0.0"
 ```
 
 ### 5.3 Verificar versão do cluster
