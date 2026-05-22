@@ -69,20 +69,20 @@ O `kube-prometheus-stack` é um Helm Chart que instala uma stack completa de obs
 
 ## Variáveis de Configuração
 
-| Variável                      | Descrição                              | Exemplo        |
-| :---------------------------- | :------------------------------------- | :------------- |
-| `<NAMESPACE>`                 | Namespace da stack                     | observability  |
-| `<STORAGE_CLASS>`             | StorageClass disponível no cluster     | sc-nfs         |
-| `<GRAFANA_PASS>`              | Senha do admin do Grafana              | SenhaForte123! |
-| `<RETENTION_TIME>`            | Tempo de retenção das métricas         | 90d            |
-| `<RETENTION_SIZE>`            | Tamanho máximo de retenção por réplica | 140GB          |
-| `<STORAGE_PROMETHEUS>`        | Tamanho do PVC do Prometheus           | 150Gi          |
-| `<STORAGE_ALERTMANAGER>`      | Tamanho do PVC do Alertmanager         | 10Gi           |
-| `<STORAGE_GRAFANA>`           | Tamanho do PVC do Grafana              | 10Gi           |
-| `<NUM_REPLICAS_PROMETHEUS>`   | Réplicas do Prometheus                 | 2              |
-| `<NUM_REPLICAS_ALERTMANAGER>` | Réplicas do Alertmanager               | 2              |
-| `<DOMAIN>`                    | Domínio base das UIs                   | tatulab.com.br |
-| `<TLS_SECRET_NAME>`           | Secret TLS no namespace da stack       | tls-tatulab    |
+| Variável                      | Descrição                              | Exemplo                   |
+| :---------------------------- | :------------------------------------- | :------------------------ |
+| `<NAMESPACE>`                 | Namespace da stack                     | observability             |
+| `<STORAGE_CLASS>`             | StorageClass disponível no cluster     | sc-nfs                    |
+| `<GRAFANA_PASS>`              | Senha do admin do Grafana              | SenhaForte123!            |
+| `<RETENTION_TIME>`            | Tempo de retenção das métricas         | 90d                       |
+| `<RETENTION_SIZE>`            | Tamanho máximo de retenção por réplica | 140GB                     |
+| `<STORAGE_PROMETHEUS>`        | Tamanho do PVC do Prometheus           | 150Gi                     |
+| `<STORAGE_ALERTMANAGER>`      | Tamanho do PVC do Alertmanager         | 10Gi                      |
+| `<STORAGE_GRAFANA>`           | Tamanho do PVC do Grafana              | 10Gi                      |
+| `<NUM_REPLICAS_PROMETHEUS>`   | Réplicas do Prometheus                 | 2                         |
+| `<NUM_REPLICAS_ALERTMANAGER>` | Réplicas do Alertmanager               | 2                         |
+| `<DOMAIN>`                    | Domínio base das UIs                   | tatulab.com.br            |
+| `<TLS_SECRET_NAME>`           | Secret TLS no namespace da stack       | tls-tatulab               |
 | `<INGRESSGATEWAY_NAME>`       | Nome do ingressgateway do namespace    | monitoring-ingressgateway |
 
 ---
@@ -387,6 +387,17 @@ curl -I https://alertmanager.<DOMAIN>
 ```
 
 > **Nota:** os nomes dos Services acima são os gerados pelo chart `kube-prometheus-stack` quando a release se chama `kube-prometheus-stack` e `fullnameOverride: prometheus` está no values.yaml. **Sempre confirme** com `kubectl get svc -n <NAMESPACE>` antes de aplicar os VirtualServices — os nomes mudam se você usar outra release name ou outro `fullnameOverride`.
+
+
+---
+Recuperar a senha
+
+```bash
+kubectl get secret grafana -n monitoramento -o jsonpath="{.data.admin-password}" | base64 --decode
+```
+
+---
+
 
 ---
 
@@ -697,13 +708,13 @@ kubectl logs -n <NAMESPACE> statefulset/alertmanager-prometheus-alertmanager --s
 
 Erros comuns e causas:
 
-| Mensagem no log | Causa provável |
-| :-- | :-- |
-| `create SMTP client: EOF` | Host errado (ex: `imap.*` em vez de `smtp.*`) — servidor não fala SMTP |
+| Mensagem no log                                                                | Causa provável                                                                |
+| :----------------------------------------------------------------------------- | :---------------------------------------------------------------------------- |
+| `create SMTP client: EOF`                                                      | Host errado (ex: `imap.*` em vez de `smtp.*`) — servidor não fala SMTP        |
 | `establish TLS connection to server: ... :465: read: connection reset by peer` | Porta 465 (TLS implícito) incompatível com STARTTLS do Alertmanager — use 587 |
-| `authentication failed` | Usuário/senha incorretos ou bloqueados pelo provedor |
-| `x509: certificate signed by unknown authority` | Servidor com certificado self-signed — ajuste `tls_config` |
-| Nenhum log de `notify` após alerta ativo | `receiver` não bate com rota — confira os `matchers` em `route.routes` |
+| `authentication failed`                                                        | Usuário/senha incorretos ou bloqueados pelo provedor                          |
+| `x509: certificate signed by unknown authority`                                | Servidor com certificado self-signed — ajuste `tls_config`                    |
+| Nenhum log de `notify` após alerta ativo                                       | `receiver` não bate com rota — confira os `matchers` em `route.routes`        |
 
 Sucesso esperado nos logs: `msg="Notify success"`.
 
@@ -715,29 +726,29 @@ Ao instalar o kube-prometheus-stack, ~130 regras de alerta são criadas automati
 
 ### 🔴 Infra crítica — acorda de madrugada
 
-| Categoria | Alertas-chave |
-| :-- | :-- |
-| API Kubernetes fora | `KubeAPIDown`, `KubeControllerManagerDown`, `KubeSchedulerDown`, `KubeProxyDown` |
-| etcd em perigo | `etcdMembersDown`, `etcdInsufficientMembers`, `etcdNoLeader`, `etcdDatabaseQuotaLowSpace` |
-| Node caído | `KubeNodeNotReady`, `KubeNodeUnreachable`, `KubeletDown` |
-| Disco enchendo | `NodeFilesystemAlmostOutOfSpace`, `KubePersistentVolumeFillingUp`, `NodeFilesystemFilesFillingUp` |
+| Categoria           | Alertas-chave                                                                                     |
+| :------------------ | :------------------------------------------------------------------------------------------------ |
+| API Kubernetes fora | `KubeAPIDown`, `KubeControllerManagerDown`, `KubeSchedulerDown`, `KubeProxyDown`                  |
+| etcd em perigo      | `etcdMembersDown`, `etcdInsufficientMembers`, `etcdNoLeader`, `etcdDatabaseQuotaLowSpace`         |
+| Node caído          | `KubeNodeNotReady`, `KubeNodeUnreachable`, `KubeletDown`                                          |
+| Disco enchendo      | `NodeFilesystemAlmostOutOfSpace`, `KubePersistentVolumeFillingUp`, `NodeFilesystemFilesFillingUp` |
 
 ### 🟠 Problemas reais — podem esperar horas
 
-| Categoria | Alertas-chave |
-| :-- | :-- |
-| Workloads degradados | `KubePodCrashLooping`, `KubePodNotReady`, `KubeDeploymentReplicasMismatch`, `KubeJobFailed` |
-| Node pressionado | `NodeCPUHighUsage`, `NodeMemoryHighUtilization`, `CPUThrottlingHigh`, `NodeSystemSaturation` |
-| Certificados internos | `KubeClientCertificateExpiration`, `KubeletClientCertificateExpiration` |
-| Sites (Blackbox) | `SiteDown`, `SiteHighLatency`, `SSLCertificateExpired`, `SSLCertificateExpiringSoon` |
+| Categoria             | Alertas-chave                                                                                |
+| :-------------------- | :------------------------------------------------------------------------------------------- |
+| Workloads degradados  | `KubePodCrashLooping`, `KubePodNotReady`, `KubeDeploymentReplicasMismatch`, `KubeJobFailed`  |
+| Node pressionado      | `NodeCPUHighUsage`, `NodeMemoryHighUtilization`, `CPUThrottlingHigh`, `NodeSystemSaturation` |
+| Certificados internos | `KubeClientCertificateExpiration`, `KubeletClientCertificateExpiration`                      |
+| Sites (Blackbox)      | `SiteDown`, `SiteHighLatency`, `SSLCertificateExpired`, `SSLCertificateExpiringSoon`         |
 
 ### 🟡 Configuração / capacidade — aviso
 
-| Categoria | Alertas-chave |
-| :-- | :-- |
+| Categoria          | Alertas-chave                                                                         |
+| :----------------- | :------------------------------------------------------------------------------------ |
 | Overcommit & quota | `KubeCPUOvercommit`, `KubeMemoryOvercommit`, `KubeQuotaAlmostFull`, `KubeHpaMaxedOut` |
-| Rollouts travados | `KubeDeploymentRolloutStuck`, `KubeStatefulSetUpdateNotRolledOut` |
-| Clock / rede | `NodeClockNotSynchronising`, `NodeNetworkInterfaceFlapping` |
+| Rollouts travados  | `KubeDeploymentRolloutStuck`, `KubeStatefulSetUpdateNotRolledOut`                     |
+| Clock / rede       | `NodeClockNotSynchronising`, `NodeNetworkInterfaceFlapping`                           |
 
 ### 🟢 Saúde do próprio stack (meta-alertas)
 
@@ -822,15 +833,15 @@ O roteamento/notificação de alertas pode ser feito por **dois motores distinto
 
 ### Comparativo
 
-| Aspecto | Alertmanager | Grafana Alerting |
-| :-- | :-- | :-- |
-| Onde moram as regras | `PrometheusRule` (YAML / GitOps) | UI do Grafana ou arquivos de provisioning |
-| Quem avalia as expressões | Prometheus | Grafana |
-| Quem roteia/notifica | Alertmanager (`route`, `receivers`) | Contact Points + Notification Policies |
-| Datasources suportados | Apenas Prometheus | Prometheus, Loki, Tempo, Mimir, InfluxDB, etc. |
-| GitOps / versionamento | ✅ Nativo (CRDs do Operator) | ⚠️ Requer provisioning YAML + ConfigMaps |
-| Disponibilidade | Independente do Grafana | Depende do Grafana rodando |
-| Curva de aprendizado | Média (YAML + PromQL) | Baixa (UI) |
+| Aspecto                   | Alertmanager                        | Grafana Alerting                               |
+| :------------------------ | :---------------------------------- | :--------------------------------------------- |
+| Onde moram as regras      | `PrometheusRule` (YAML / GitOps)    | UI do Grafana ou arquivos de provisioning      |
+| Quem avalia as expressões | Prometheus                          | Grafana                                        |
+| Quem roteia/notifica      | Alertmanager (`route`, `receivers`) | Contact Points + Notification Policies         |
+| Datasources suportados    | Apenas Prometheus                   | Prometheus, Loki, Tempo, Mimir, InfluxDB, etc. |
+| GitOps / versionamento    | ✅ Nativo (CRDs do Operator)         | ⚠️ Requer provisioning YAML + ConfigMaps        |
+| Disponibilidade           | Independente do Grafana             | Depende do Grafana rodando                     |
+| Curva de aprendizado      | Média (YAML + PromQL)               | Baixa (UI)                                     |
 
 ### Cenário A — Só Alertmanager (recomendado para GitOps)
 
@@ -890,12 +901,12 @@ Configuração no Grafana: **Administration → General → Alerting → Externa
 
 ### O que vamos adicionar — e por quê
 
-| Alerta | Lacuna que preenche |
-| :-- | :-- |
-| `PodOOMKilled` | Built-ins não alertam especificamente quando um container é morto por OOM. Útil pra capacity planning de limits. |
-| `DiskWillFillIn24h` | Forecasting com `predict_linear` — antecipa enchimento antes do `NodeFilesystemSpaceFillingUp` atual. |
-| `PVCPending` | Nenhum built-in cobre PVC preso em `Pending` (problema comum de storage class / provisioner). |
-| `ManyPodsOnNode` | O built-in `KubeletTooManyPods` só dispara em ≥95% — este pega gargalo mais cedo (>85%). |
+| Alerta              | Lacuna que preenche                                                                                              |
+| :------------------ | :--------------------------------------------------------------------------------------------------------------- |
+| `PodOOMKilled`      | Built-ins não alertam especificamente quando um container é morto por OOM. Útil pra capacity planning de limits. |
+| `DiskWillFillIn24h` | Forecasting com `predict_linear` — antecipa enchimento antes do `NodeFilesystemSpaceFillingUp` atual.            |
+| `PVCPending`        | Nenhum built-in cobre PVC preso em `Pending` (problema comum de storage class / provisioner).                    |
+| `ManyPodsOnNode`    | O built-in `KubeletTooManyPods` só dispara em ≥95% — este pega gargalo mais cedo (>85%).                         |
 
 ### Manifesto
 
